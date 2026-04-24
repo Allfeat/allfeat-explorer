@@ -39,6 +39,31 @@ export default defineNuxtConfig({
 
   modules: ['@pinia/nuxt', '@vueuse/nuxt', '@nuxtjs/color-mode'],
 
+  // Nitro route-level stale-while-revalidate. Cache keys include the
+  // full URL (including `?network=`), so per-network SSR stays isolated.
+  // Listings / dashboards use a short window aligned on block time;
+  // detail pages get a longer window because finalised records don't
+  // mutate. Nitro serves the cached HTML instantly and regenerates in
+  // the background when stale — navigation perceives no latency after
+  // the first miss. No page reads cookies at render time, so URL-keyed
+  // caching is safe (the color-mode module paints the theme client-side
+  // before first frame).
+  routeRules: {
+    '/': { swr: 3 },
+    '/blocks': { swr: 3 },
+    '/blocks/**': { swr: 30 },
+    '/extrinsics': { swr: 3 },
+    '/extrinsics/**': { swr: 30 },
+    '/events': { swr: 3 },
+    '/accounts': { swr: 5 },
+    '/accounts/**': { swr: 15 },
+    '/ats': { swr: 5 },
+    '/ats/**': { swr: 30 },
+    '/token': { swr: 30 },
+    '/token/**': { swr: 60 },
+    '/runtime': { swr: 60 },
+  },
+
   // Emit `data-theme="dark"|"light"` on <html> so our token CSS (in
   // `assets/styles/_tokens.scss`) picks up the mode. Default preference is
   // 'system' — the module injects a head script that sets the attribute

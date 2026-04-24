@@ -10,6 +10,7 @@
 pub mod accounts;
 pub mod ats;
 pub mod blocks;
+pub mod cache_control;
 pub mod error;
 pub mod extrinsics;
 pub mod indexing;
@@ -19,6 +20,7 @@ pub mod networks;
 pub mod runtime;
 pub mod token;
 
+use axum::middleware::from_fn;
 use axum::routing::get;
 use axum::Router;
 
@@ -27,16 +29,16 @@ use crate::server::AppState;
 
 pub use error::ApiError;
 
-/// Build the REST router. All routes are stateful — `AppState` is
-/// passed in as the router state so individual handlers can use
-/// `State<AppState>` extractors without re-constructing the state type.
+/// Build the REST router. Routes are grouped by `Cache-Control` tier so
+/// the HTTP cache policy is declared where the routes are listed —
+/// see [`cache_control`] for the tier semantics.
+///
+/// `AppState` is bound once at the end so the sub-routers stay typed as
+/// `Router<AppState>` and the `State<AppState>` extractor keeps working
+/// in every handler.
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/api/v1/networks", get(networks::list_networks))
-        // Blocks — per-network under `/networks/:network_id`. Order
-        // matters: more-specific routes before `/blocks/:number` so
-        // `head` and `:number/extrinsics` aren't captured by the
-        // catch-all number path.
+    // Listings + head-following feeds. Short TTL + big SWR.
+    let latest: Router<AppState> = Router::new()
         .route(
             "/api/v1/networks/{network_id}/blocks",
             get(blocks::list_blocks),
@@ -46,63 +48,21 @@ pub fn router(state: AppState) -> Router {
             get(blocks::head_block),
         )
         .route(
-            "/api/v1/networks/{network_id}/blocks/{number}",
-            get(blocks::block_by_number),
-        )
-        .route(
-            "/api/v1/networks/{network_id}/blocks/{number}/extrinsics",
-            get(extrinsics::extrinsics_in_block),
-        )
-        .route(
-            "/api/v1/networks/{network_id}/blocks/{number}/events",
-            get(blocks::events_in_block),
-        )
-        .route(
             "/api/v1/networks/{network_id}/waveform",
             get(blocks::waveform_blocks),
         )
-        // Extrinsics
         .route(
             "/api/v1/networks/{network_id}/extrinsics",
             get(extrinsics::list_extrinsics),
         )
         .route(
-            "/api/v1/networks/{network_id}/extrinsics/{id}",
-            get(extrinsics::extrinsic_by_id),
-        )
-        // Chain metadata — static schema the UI needs for filter dropdowns.
-        .route(
-            "/api/v1/networks/{network_id}/metadata/pallets",
-            get(metadata::list_pallets),
-        )
-        // Runtime identity + historical upgrades + raw-blob downloads.
-        .route(
-            "/api/v1/networks/{network_id}/runtime",
-            get(runtime::runtime_details),
-        )
-        .route(
-            "/api/v1/networks/{network_id}/runtime/upgrades",
-            get(runtime::runtime_upgrades),
-        )
-        .route(
-            "/api/v1/networks/{network_id}/runtime/wasm",
-            get(runtime::runtime_wasm),
-        )
-        .route(
-            "/api/v1/networks/{network_id}/runtime/metadata",
-            get(runtime::runtime_metadata),
-        )
-        // Transfers
-        .route(
             "/api/v1/networks/{network_id}/transfers",
             get(blocks::list_transfers),
         )
-        // Chain-wide latest events — dashboard feed.
         .route(
             "/api/v1/networks/{network_id}/events",
             get(blocks::list_events),
         )
-        // Accounts
         .route(
             "/api/v1/networks/{network_id}/accounts",
             get(accounts::top_accounts),
@@ -119,31 +79,89 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/networks/{network_id}/accounts/{address}/allocations",
             get(token::account_allocations),
         )
-        // Token allocation (mainnet-only). Non-mainnet networks return 404.
         .route(
             "/api/v1/networks/{network_id}/token/overview",
             get(token::token_overview),
         )
-        .route(
-            "/api/v1/networks/{network_id}/token/envelopes/{envelope_id}",
-            get(token::envelope_detail),
-        )
-        // ATS — `feed` and `stats` are fixed paths, listed before the
-        // `:index` catch-all so they resolve correctly.
         .route("/api/v1/networks/{network_id}/ats", get(ats::list_ats))
         .route("/api/v1/networks/{network_id}/ats/feed", get(ats::ats_feed))
         .route(
             "/api/v1/networks/{network_id}/ats/stats",
             get(ats::ats_stats),
         )
+        .layer(from_fn(cache_control::latest));
+
+    // Detail-by-id — stable once the referenced block finalises.
+    // `blocks/{number}` has to be more specific than `blocks/head`
+    // already handled above; the fixed paths (`head`, `feed`, `stats`,
+    // `extrinsics`, `events`) are all siblings under `latest` so the
+    // catch-all `{number}` / `{index}` / `{envelope_id}` entries below
+    // won't capture them.
+    let detail: Router<AppState> = Router::new()
+        .route(
+            "/api/v1/networks/{network_id}/blocks/{number}",
+            get(blocks::block_by_number),
+        )
+        .route(
+            "/api/v1/networks/{network_id}/blocks/{number}/extrinsics",
+            get(extrinsics::extrinsics_in_block),
+        )
+        .route(
+            "/api/v1/networks/{network_id}/blocks/{number}/events",
+            get(blocks::events_in_block),
+        )
+        .route(
+            "/api/v1/networks/{network_id}/extrinsics/{id}",
+            get(extrinsics::extrinsic_by_id),
+        )
         .route(
             "/api/v1/networks/{network_id}/ats/{index}",
             get(ats::ats_by_index),
         )
-        // Indexing status — consumed by the UI banner.
-        .route("/api/v1/indexing/status", get(indexing::indexer_status))
-        // Build identity — crate version + git sha for the footer.
+        .route(
+            "/api/v1/networks/{network_id}/token/envelopes/{envelope_id}",
+            get(token::envelope_detail),
+        )
+        .layer(from_fn(cache_control::detail));
+
+    // Deploy / runtime-upgrade scoped. Minutes of browser cache are
+    // fine — runtime upgrades ship on a scale of days to weeks.
+    let static_: Router<AppState> = Router::new()
+        .route("/api/v1/networks", get(networks::list_networks))
+        .route(
+            "/api/v1/networks/{network_id}/metadata/pallets",
+            get(metadata::list_pallets),
+        )
+        .route(
+            "/api/v1/networks/{network_id}/runtime",
+            get(runtime::runtime_details),
+        )
+        .route(
+            "/api/v1/networks/{network_id}/runtime/upgrades",
+            get(runtime::runtime_upgrades),
+        )
+        .route(
+            "/api/v1/networks/{network_id}/runtime/wasm",
+            get(runtime::runtime_wasm),
+        )
+        .route(
+            "/api/v1/networks/{network_id}/runtime/metadata",
+            get(runtime::runtime_metadata),
+        )
         .route("/api/v1/meta", get(meta::build_info))
+        .layer(from_fn(cache_control::static_));
+
+    // Indexer status feeds the UI banner; staleness would hide a stuck
+    // indexer from operators and users alike.
+    let no_store: Router<AppState> = Router::new()
+        .route("/api/v1/indexing/status", get(indexing::indexer_status))
+        .layer(from_fn(cache_control::no_store));
+
+    Router::new()
+        .merge(latest)
+        .merge(detail)
+        .merge(static_)
+        .merge(no_store)
         .with_state(state)
 }
 
