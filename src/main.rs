@@ -135,6 +135,19 @@ async fn main() {
         std::process::exit(3);
     }
 
+    // Kick the finalized-head supervisor on every RPC client so
+    // `/readyz` can flip to 200 without waiting for the first API
+    // caller. Without this, `--mode=server` pods deadlock: no traffic
+    // → no subxt connect → `is_ready()` never true → Service has no
+    // endpoints → still no traffic. The supervisor is idempotent
+    // (CAS-guarded) so calling it here in `--mode=indexer` — where
+    // the workers will also trigger it via their own subxt calls —
+    // is harmless.
+    #[cfg(not(feature = "mock"))]
+    for client in app_state.indexer_clients.values() {
+        client.warm_up();
+    }
+
     // `--reconcile` short-circuits the normal boot. Sweeps every
     // indexed network in order, prints a per-network report, and exits
     // with a non-zero status if any of the sweeps failed. Runs *after*

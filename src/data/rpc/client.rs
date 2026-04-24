@@ -576,6 +576,19 @@ impl RpcClient {
         self.ats_feed_tx.subscribe()
     }
 
+    /// Eagerly start the finalized-head supervisor so `/readyz` can flip
+    /// to 200 without waiting for a first API caller.
+    ///
+    /// `--mode=server` pods don't run the indexer, so nothing inside the
+    /// process touches subxt until an external request arrives. That
+    /// caused a chicken-and-egg: readiness stayed 503 → the Service had
+    /// no endpoints → no external request would ever land. Calling this
+    /// from `main` breaks the cycle; the supervisor reconnects on its
+    /// own with backoff if the RPC isn't reachable yet.
+    pub fn warm_up(&self) {
+        self.ensure_watcher_running();
+    }
+
     /// Spawn the finalized-head supervisor task, unless one is already
     /// running. The supervisor owns its own reconnect loop with
     /// exponential backoff (see [`run_watcher_supervisor`]); callers only
