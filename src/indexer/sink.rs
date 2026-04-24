@@ -398,46 +398,50 @@ pub async fn reconcile_account_balances(
     network_sid: i16,
     snapshots: &[([u8; 32], AccountSnapshot)],
 ) -> DataResult<u64> {
+    if snapshots.is_empty() {
+        return Ok(0);
+    }
+
+    // 5 binds per row (account, free, reserved, frozen, nonce). `network_sid`
+    // is bound once per statement in the WHERE clause. Same ceiling as the
+    // per-block UPSERT above — we stay comfortably under Postgres's 65535
+    // parameter limit.
+    const COLS: usize = 5;
+    const CHUNK: usize = MAX_BINDS_PER_QUERY / COLS;
+
     let mut updated: u64 = 0;
-    for (account, snap) in snapshots {
-        let free_text = snap.free.to_string();
-        let reserved_text = snap.reserved.to_string();
-        let frozen_text = snap.frozen.to_string();
-        let nonce: i64 = snap.nonce as i64;
-        let res = sqlx::query(
-            "UPDATE account_balances SET
-                 free = $3::NUMERIC,
-                 reserved = $4::NUMERIC,
-                 frozen = $5::NUMERIC,
-                 nonce = GREATEST(nonce, $6)
-             WHERE network_id = $1 AND account = $2",
-        )
-        .bind(network_sid)
-        .bind(&account[..])
-        .bind(free_text)
-        .bind(reserved_text)
-        .bind(frozen_text)
-        .bind(nonce)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| {
+    for chunk in snapshots.chunks(CHUNK) {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            "UPDATE account_balances AS ab SET \
+                 free = v.free, \
+                 reserved = v.reserved, \
+                 frozen = v.frozen, \
+                 nonce = GREATEST(ab.nonce, v.nonce) \
+             FROM (",
+        );
+        qb.push_values(chunk.iter(), |mut b, (account, snap)| {
+            b.push_bind(account.to_vec())
+                .push_bind(snap.free.to_string())
+                .push_unseparated("::NUMERIC")
+                .push_bind(snap.reserved.to_string())
+                .push_unseparated("::NUMERIC")
+                .push_bind(snap.frozen.to_string())
+                .push_unseparated("::NUMERIC")
+                .push_bind(snap.nonce as i64);
+        });
+        qb.push(") AS v(account, free, reserved, frozen, nonce) WHERE ab.network_id = ");
+        qb.push_bind(network_sid);
+        qb.push(" AND ab.account = v.account");
+
+        let res = qb.build().execute(&mut **tx).await.map_err(|e| {
             DataError::Rpc(format!(
-                "reconcile_account_balance(net={network_sid}, account {}): {e}",
-                hex_short(account)
+                "reconcile_account_balances(net={network_sid}, {} rows): {e}",
+                chunk.len()
             ))
         })?;
         updated += res.rows_affected();
     }
     Ok(updated)
-}
-
-fn hex_short(bytes: &[u8; 32]) -> String {
-    let mut out = String::with_capacity(12);
-    for b in &bytes[..4] {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out.push('…');
-    out
 }
 
 /// Apply one block's aggregated ATS side-effects. Composition of
