@@ -101,7 +101,7 @@ pub const ALLFEAT: NetworkSpec = NetworkSpec {
         "Allfeat-8",
     ],
     ats_blocks_per: 5,
-    endpoint: "wss://rpc.allfeat.network",
+    endpoint: "wss://mainnet.rpc.allfeat.org",
 };
 
 pub const MELODIE: NetworkSpec = NetworkSpec {
@@ -132,7 +132,7 @@ pub const MELODIE: NetworkSpec = NetworkSpec {
         "Melodie-8",
     ],
     ats_blocks_per: 3,
-    endpoint: "wss://rpc.melodie.network",
+    endpoint: "wss://melodie-rpc.allfeat.io",
 };
 
 pub const NETWORKS: &[&NetworkSpec] = &[&ALLFEAT, &MELODIE];
