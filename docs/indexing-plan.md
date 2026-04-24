@@ -579,8 +579,11 @@ pub enum IndexerState {
     Offline,       // cursor stale > 60s OU DB unreachable
 }
 
-#[server]
-pub async fn get_indexer_status() -> Result<IndexerStatus, ServerFnError> { ... }
+Handler Axum :
+```rust
+// GET /api/v1/indexing/status
+pub async fn indexer_status(State(state): State<AppState>)
+    -> Result<Json<IndexerStatus>, ApiError> { ... }
 ```
 
 Implémentation :
@@ -589,25 +592,16 @@ Implémentation :
 - `backfill_done` = `SELECT COUNT(*) FROM blocks`
 - `backfill_total` = `finalized_head + 1`
 - Cache côté serveur (`Arc<watch::Receiver<IndexerStatus>>`) rafraîchi
-  toutes les 2s par une tâche dédiée → `get_indexer_status()` est un
-  `borrow()` trivial.
+  toutes les 2s par une tâche dédiée → le handler fait un `borrow()`
+  trivial.
 
-### Composant Leptos
+### Composant frontend
 
-Nouveau fichier `src/ui/banner.rs`, monté dans `src/app/mod.rs` juste
-au-dessus de `<Header>` :
-
-```rust
-#[component]
-pub fn IndexingBanner() -> impl IntoView {
-    let status = create_local_resource(
-        || (),
-        |_| async { get_indexer_status().await.ok() },
-    );
-    // refresh toutes les 5s côté client
-    // ...
-}
-```
+Bannière Vue dans `web/app/components/layout/`, montée au-dessus du
+`<Header>`. Polling via un composable sur `GET /api/v1/indexing/status`
+toutes les 5s côté client ; la valeur initiale est résolue via
+`useAsyncData` pour que le SSR ne provoque pas de layout shift à
+l'hydratation.
 
 ### Copy & états visuels
 
@@ -767,18 +761,15 @@ fallback RPC reste activable par flag jusqu'à la phase 7.
 ### Phase 0.5 — Bandeau scaffold
 
 **Livrables :**
-- `src/ui/banner.rs` + style SCSS.
-- `src/server/fns/health.rs::get_indexer_status` renvoyant `Healthy`
-  constant.
-- Montage dans `src/app/mod.rs`.
+- Composant `IndexingBanner.vue` (+ SCSS) dans `web/app/components/layout/`.
+- Handler `GET /api/v1/indexing/status` renvoyant `Healthy` constant.
+- Montage dans le layout Nuxt par défaut.
 
 **Tests :**
-- Unitaires : `IndexingBanner` rendu pour chaque `IndexerState` produit
-  le HTML attendu (SSR via `leptos::ssr::render_to_string`), assertions
-  sur le texte affiché et la classe CSS d'état.
-- Intégration : `tests/banner.rs::endpoint_returns_healthy_stub` hit
-  `get_indexer_status()`, assert `state = Healthy` et payload conforme
-  au contrat.
+- Unitaires (backend) : `compute_status` retourne bien `Healthy` sur les
+  fixtures stub, couvre chaque variant d'`IndexerState`.
+- Intégration : `tests/banner.rs` hit le handler, assert `state = Healthy`
+  et payload conforme au contrat.
 
 **Critère :** visuel validé sur toutes les pages, pas de layout shift.
 

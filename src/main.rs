@@ -385,10 +385,10 @@ async fn main() {
     // routes (404 spam) without reaching for a profiler.
     //
     // Security headers stamped on every response via `if_not_present`.
-    // The backend serves JSON + WS only now, so the CSP that gated the
-    // Leptos HTML doc is gone; the remaining trio (nosniff / referrer /
-    // permissions) are still worth stamping on API responses so they
-    // can't be mis-interpreted if a browser happens to navigate to one.
+    // The backend serves JSON + WS only — no HTML — so CSP is irrelevant
+    // here; the trio below (nosniff / referrer / permissions) still gets
+    // stamped on API responses so they can't be mis-interpreted if a
+    // browser happens to navigate to one.
     let app = Router::new()
         .merge(ws_router)
         .merge(health_router)

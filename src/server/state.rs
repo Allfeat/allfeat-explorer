@@ -1,8 +1,8 @@
-//! Application state available to every server function.
+//! Application state shared across every Axum handler.
 //!
-//! Built once at boot from [`ServerConfig`], then stored as a per-request
-//! Leptos context (see `main.rs`). Server functions pull it via
-//! `use_context::<AppState>()`.
+//! Built once at boot from [`ServerConfig`] and handed to the router as
+//! its `State<AppState>` — handlers pull the pieces they need via the
+//! standard Axum extractor.
 //!
 //! Multi-tenant indexing: every network whose `RPC_ENDPOINT_<ID>` env var
 //! is set gets one entry in `indexer_clients`. Networks without an endpoint

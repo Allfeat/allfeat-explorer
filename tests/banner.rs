@@ -7,11 +7,6 @@
 //! handler does — injecting a fake row via the `indexer_cursor` table
 //! and composing with `compute_status` — so any future refactor to the
 //! cursor schema fails loudly here.
-//!
-//! The former `endpoint_returns_healthy_stub` asserted a Leptos-only
-//! short-circuit (empty Vec when the server-fn context was missing);
-//! the v3 rewrite replaces that path with an Axum handler and the test
-//! is re-introduced as an HTTP-level fixture in Phase 2.
 
 #![cfg(feature = "ssr")]
 

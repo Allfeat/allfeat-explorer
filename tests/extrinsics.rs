@@ -13,12 +13,11 @@
 //!   extrinsic from the resulting rows and resolve it by its raw
 //!   hash bytes. Exercises the `extrinsics.hash` index + the DB
 //!   query path.
-//! * `extrinsic_by_id_round_trips_through_provider` — the SSR-facing
-//!   replacement for the plan's `page_extrinsic_detail_smoke`: hit
+//! * `extrinsic_by_id_round_trips_through_provider` — hit
 //!   `IndexedProvider::extrinsic_by_id` directly, assert the domain
 //!   value carries a signer (when present), pallet, call, fee and a
-//!   result status. Running the Leptos renderer adds no new signal
-//!   over validating the same struct the component receives.
+//!   result status. The API handler returns the same struct verbatim,
+//!   so validating it at the provider boundary is sufficient.
 //! * `buffer_lookup_tip` — inject a synthetic best block carrying one
 //!   extrinsic into the `PendingBuffer`, then resolve it via
 //!   `IndexedProvider::extrinsic_by_id` with `is_finalized = false`

@@ -1,164 +1,199 @@
 # Allfeat Explorer
 
-Block explorer for the [Allfeat](https://github.com/Allfeat/allfeat) and
-Melodie networks. Built with [Leptos 0.8](https://github.com/leptos-rs/leptos)
-SSR + [Axum](https://github.com/tokio-rs/axum); on-chain data served through
-[subxt](https://github.com/paritytech/subxt) against any Substrate-compatible
-node, with a built-in mock backend for offline development.
+Block explorer for the [Allfeat](https://github.com/Allfeat/allfeat) mainnet
+and the Melodie testnet. Two processes:
+
+- **Rust backend** (Axum + `subxt` + `sqlx`) — REST at `/api/v1/*` and a
+  multiplexed WebSocket at `/api/v1/live`, listening on `:8088`.
+- **Nuxt 4 frontend** (Vue 3 SSR, Bun toolchain) — serves the UI on `:3000`
+  and proxies `/api/*` to the backend.
+
+Chain data reaches the UI through a single `ChainData` provider trait, wired
+to one of three implementations at compile time: a Postgres-backed indexed
+provider (prod default when `DATABASE_URL` is set), a `subxt` RPC provider
+(fallback), or a deterministic in-memory mock (dev / e2e).
 
 ## Quick start
 
-```bash
-# dev server backed by the synthetic mock generator (no node required)
-cargo leptos watch --bin-features mock --lib-features mock
+The root `package.json` exposes the loops via Bun:
 
-# dev server hitting a local Allfeat / Melodie node (default build, no extra features)
-RPC_ENDPOINT_MELODIE=ws://127.0.0.1:9944 cargo leptos watch
+```bash
+# Mock backend (no node, no DB) + Nuxt dev server.
+bun run dev:api        # Rust, --features ssr,mock, :8088
+bun run dev:web        # Nuxt, :3000
+```
+
+`mprocs` bundles Postgres + backend + Nuxt into one multiplexed shell:
+
+```bash
+mprocs                          # docker postgres + mock backend + Nuxt
+mprocs -c mprocs.live.yaml      # live local node at ws://127.0.0.1:9944
+mprocs -c mprocs.prod.yaml      # public Allfeat mainnet archive RPC
 ```
 
 Open <http://127.0.0.1:3000>.
 
-The dev shell in `flake.nix` already pins every tool the project expects
-(`cargo-leptos`, `wasm-bindgen-cli`, `dart-sass`, `pnpm`, `playwright`, the
-`subxt` CLI). `nix develop` or `direnv exec .` picks it up.
+The dev shell in `flake.nix` pins every tool the project expects (`cargo`,
+`subxt` CLI, `bun`, `playwright`, `sqlx-cli`, `mprocs`). Use `nix develop`
+or `direnv exec .` to enter it.
 
 ## Build-time configuration
 
-The mock ↔ RPC choice is a Cargo feature, not an env var:
+Mock ↔ RPC is a Cargo feature; the two paths never coexist in one binary.
 
 | Cargo feature | Effect                                                                                                |
 |---------------|-------------------------------------------------------------------------------------------------------|
-| _(default)_   | Subxt-backed `RpcProvider`. Talks to the configured node. Mock module isn't compiled.                 |
-| `mock`        | Deterministic in-memory generator. The RPC stack (subxt, moka, …) isn't compiled and never linked.   |
+| `ssr`         | Base server build (axum, tokio, subxt, sqlx, tracing, moka, …). Required for every backend command.  |
+| `mock`        | Swaps `RpcProvider` → `MockProvider` at compile time. Subxt and sqlx are never linked.                |
+| `ts-bindings` | Activates the `ts-rs` derives for TS binding generation. Flipped only by `bun run gen:bindings`.       |
 
-Pass it through cargo-leptos via `--bin-features mock --lib-features mock` (or
-add a CI matrix that builds both). `cargo leptos serve` without the flag
-yields the production build.
+Production builds use `--features ssr` (no `mock`, no `ts-bindings`).
 
-## Runtime configuration (RPC build only)
+## Runtime configuration
 
-Configuration is environment-only — nothing is read outside of boot, so
-`ServerConfig::from_env` is the single source of truth.
+Environment-only. `ServerConfig::from_env` is the sole reader at boot; the
+request path never touches `std::env::var`.
 
-| Variable                  | Default                           | Meaning                                                         |
-|---------------------------|-----------------------------------|-----------------------------------------------------------------|
-| `RPC_ENDPOINT_<NETWORK>`  | _unset ⇒ network disabled_        | RPC endpoint for a given `NetworkSpec::id`. Networks without an endpoint are hidden from the UI switcher and skipped by the indexer. |
-| `WS_ALLOWED_ORIGINS`      | `*` (dev) — set explicitly in prod | Comma-separated exact origin allowlist for `/ws` upgrades.      |
-| `DATABASE_URL`            | _unset_                           | Postgres connection string for the indexer. One DB covers every indexed network (multi-tenant via `network_id` column). Unset ⇒ indexer disabled, reads fall back to `RpcProvider`. |
-| `RUST_LOG`                | `info,allfeat_explorer=debug`     | `tracing-subscriber` filter. See "Logging" below.               |
+| Variable                  | Default                         | Meaning                                                      |
+|---------------------------|---------------------------------|--------------------------------------------------------------|
+| `RPC_ENDPOINT_<NETWORK>`  | _unset ⇒ network disabled_      | RPC endpoint for a given `NetworkSpec::id` (upper-cased). Networks without an endpoint are hidden from the switcher and skipped by the indexer. Boot aborts in non-mock builds when no network has an endpoint set. |
+| `LISTEN_ADDR`             | `127.0.0.1:8088`                | Socket the HTTP server binds to.                              |
+| `WS_ALLOWED_ORIGINS`      | `*` (dev) — set explicitly in prod | Comma-separated origin allowlist for `/api/v1/live`.      |
+| `API_ALLOWED_ORIGINS`     | `*` (dev) — set explicitly in prod | Comma-separated CORS allowlist for `/api/v1/*`.           |
+| `DATABASE_URL`            | _unset_                         | Postgres connection string. Unset ⇒ indexer disabled, reads fall back to `RpcProvider`. One DB covers every indexed network (multi-tenant via a `network_id` / `network_sid` column). |
+| `INDEXER_BACKFILL_CONCURRENCY` | `8`                        | Parallel backfill workers. Clamped ≥1.                        |
+| `RUST_LOG`                | `info,allfeat_explorer=debug`   | `tracing-subscriber` filter.                                 |
 
-For a production deployment (TLS, reverse-proxy config, systemd unit,
-Docker + kube probes) see [docs/deployment.md](docs/deployment.md).
+Frontend runtime knobs live in `web/nuxt.config.ts` and are overridden via
+`NUXT_*` env vars in prod — notably `NUXT_API_ORIGIN` (SSR target; Nitro
+bypasses the Vite dev proxy) and `NUXT_PUBLIC_WS_BASE` (direct WS origin
+because the Nuxt dev server cannot proxy WebSocket upgrades).
 
-`<NETWORK>` is the upper-case network id (e.g. `RPC_ENDPOINT_MELODIE`,
-`RPC_ENDPOINT_ALLFEAT`). Only the networks declared in
-`src/network.rs::NETWORKS` are resolved. Networks are opt-in: if
-`RPC_ENDPOINT_<ID>` is not set, that chain is completely disabled —
-hidden from the switcher, not indexed, and never fetched. Boot aborts in
-non-mock builds when **no** network has an endpoint configured; there
-would be nothing to serve.
+See [`docs/deployment.md`](docs/deployment.md) for the prod runbook (TLS,
+reverse proxy, ArgoCD, SealedSecrets) and [`docs/ops.md`](docs/ops.md) for
+operator playbooks (backfill, reconciliation, backups).
+
+## Deployment modes
+
+A single binary, three roles via `--mode`:
+
+- `all` (default) — indexer workers + HTTP in one process. Tolerates a
+  missing DB (falls back to `RpcProvider`).
+- `indexer` — worker pool only, no HTTP listener. Requires `DATABASE_URL`.
+- `server` — HTTP only, no workers. Requires `DATABASE_URL`.
+
+`--reconcile` is a one-shot maintenance sweep: walk every row in
+`account_balances`, refetch from the chain at the current head, UPDATE
+drifted totals in place, exit. Run with the indexer stopped to avoid
+self-healing races.
 
 ## Running against a live node
 
-1. Start an Allfeat / Melodie dev node on `ws://127.0.0.1:9944`.
-2. Regenerate `artifacts/allfeat-metadata.scale` if the runtime changed (the
-   `subxt` CLI lives in the dev shell; see the memory note
+1. Start an Allfeat / Melodie node on `ws://127.0.0.1:9944`.
+2. If the runtime changed, regenerate `artifacts/allfeat-metadata.scale`
+   with the `subxt` CLI (see the memory note
    `project_metadata_generation.md` for the exact scope and command).
-3. Launch the server (default build = RPC mode):
+3. Start the stack:
    ```bash
+   mprocs -c mprocs.live.yaml
+   # …or by hand:
+   docker compose up -d postgres
    RPC_ENDPOINT_MELODIE=ws://127.0.0.1:9944 \
-     cargo leptos serve --release
+     DATABASE_URL=postgres://explorer:explorer@127.0.0.1:54320/explorer \
+     cargo run --features ssr --bin allfeat-explorer
    ```
 
-The subxt client lives behind an `RwLock<Option<AllfeatClient>>`: transient
-WebSocket hiccups invalidate the slot and the next request re-connects. On a
-connect-time transport error `RpcClient::subxt` retries once before bubbling
-up. A background task subscribes to finalized headers and publishes the head
-number to a watch channel, so the hot paths read the finalized head as a
-single in-process load instead of a round-trip per request.
-
-## Logging
-
-The server installs `tracing-subscriber` at startup and layers
-`tower_http::trace::TraceLayer` on the axum router — every HTTP / WS
-request produces a span with latency and status, and the RPC path emits
-`debug` traces on cache misses and watcher restarts. Override the filter
-via `RUST_LOG`:
-
-```bash
-RUST_LOG=debug,allfeat_explorer=trace cargo leptos serve
-```
+The subxt client lives behind `RwLock<Option<AllfeatClient>>`: transient
+WebSocket hiccups invalidate the slot and the next request reconnects. A
+background supervisor subscribes to finalized headers and publishes the
+head number into a watch channel, so hot paths read it as a single
+in-process load rather than a round-trip per request.
 
 ## Testing
 
-### Rust — unit + ignored integration
+### Rust
 
 ```bash
-# unit tests (no node needed)
+# Unit tests — no external services.
 cargo test --features ssr --lib
 
-# live integration tests; requires ws://127.0.0.1:9944
+# Live RPC integration — needs a dev node on ws://127.0.0.1:9944.
+# Override with ALLFEAT_RPC_URL. All such tests are #[ignore] by default.
 cargo test --features ssr -- --ignored
-# override the endpoint:
-ALLFEAT_RPC_URL=ws://... cargo test --features ssr -- --ignored
+
+# DB integration — needs the postgres-test service (port 54329).
+docker compose up -d postgres-test
+cargo test --features ssr -- --ignored
 ```
 
-Unit tests live in `#[cfg(test)] mod tests` blocks inside each module (mostly
-`src/data/rpc/{mappers,cache,client}.rs`). Live tests live in
-`tests/rpc_integration.rs` and are all `#[ignore]` — CI runs unit tests
-unconditionally and opts into `--ignored` only when a node is available.
+`tests/common/mod.rs::fresh_db` creates a throwaway `test_<pid>_<rand>`
+database per test and schedules `DROP DATABASE` on teardown, so no state
+leaks across runs.
 
-### End-to-end — Playwright
+### Playwright
 
 ```bash
-# from the repo root; the Playwright webServer block builds with
-# `--bin-features mock --lib-features mock` so the suite passes without a node.
-pnpm --dir end2end exec playwright test
-
-# Or point at a live node — drop the mock features and forward RPC endpoints:
-EXPLORER_FEATURES= RPC_ENDPOINT_MELODIE=ws://127.0.0.1:9944 \
-  pnpm --dir end2end exec playwright test
+bun run test:e2e
 ```
 
-Chromium is installed once via `pnpm --dir end2end exec playwright install
-chromium`.
+`end2end/playwright.config.ts` boots both servers automatically. The
+backend runs with `--features ssr,mock` by default so the suite passes
+without a live chain. Point the suite at a real node by exporting
+`EXPLORER_FEATURES=ssr` plus `RPC_ENDPOINT_<NETWORK>=...`.
+
+## Generated TypeScript bindings
+
+Wire types live once in `src/domain.rs` and are exported to
+`bindings/*.ts` via `ts-rs`. The Nuxt app consumes them through the
+`@bindings` alias so the server and the browser share the same shapes.
+
+```bash
+bun run gen:bindings
+```
+
+Run this after any change to a type that carries
+`#[cfg_attr(feature = "ts-bindings", derive(TS))]`, and commit the
+regenerated files.
 
 ## Production build
 
 ```bash
-cargo leptos build --release
+# Rust binary.
+bun run build:api
+# Nuxt.
+bun run build:web
 ```
 
-Artifacts land in `target/release` (server binary) and `target/site` (static
-assets). Copy both to the target host, set the `LEPTOS_*` env vars below, and
-run the binary:
+Images are published to GHCR by `.github/workflows/images.yml` on every
+push to `master` and every `v*` tag:
 
-```sh
-export LEPTOS_OUTPUT_NAME="allfeat-explorer"
-export LEPTOS_SITE_ROOT="site"
-export LEPTOS_SITE_PKG_DIR="pkg"
-export LEPTOS_SITE_ADDR="127.0.0.1:3000"
-export LEPTOS_RELOAD_PORT="3001"
+- `ghcr.io/allfeat/allfeat-explorer-backend` — one image, three roles
+  (`--mode=all|indexer|server`) + the `--reconcile` one-shot.
+- `ghcr.io/allfeat/allfeat-explorer-web`.
 
-export RPC_ENDPOINT_MELODIE=wss://rpc.melodie.allfeat.io
-```
+Kubernetes manifests live in the separate `infra-web3` repo; see
+[`docs/deployment.md`](docs/deployment.md).
 
 ## Project layout
 
 ```
-src/
-  data/                trait ChainData + providers (mock when feature=mock, otherwise rpc/{client,cache,mappers,provider})
-  server/              ServerConfig, AppState, #[server] fns per theme
-  pages/               Leptos SSR pages (one per route)
-  ui/                  header / footer / brand / network widgets
-  format.rs            display helpers (planck → AFT, hash truncation, time deltas)
-  network.rs           NetworkSpec definitions + ChainCtx (real-chain metadata)
-  domain.rs            serializable types shipped over server fns
-  mock/                synthetic data generators (gated behind feature = "mock")
-artifacts/             pinned SCALE metadata for codegen
-docs/                  migration plan & design notes
-end2end/               Playwright suite
-tests/                 Rust integration tests (all #[ignore])
+src/                      Rust backend (allfeat-explorer crate)
+  data/                   ChainData trait + providers (rpc, indexed, mock)
+  indexer/                live worker, backfill, projections, sink, reconcile
+  server/                 Axum router, config, state, health, metrics
+  live/                   WebSocket protocol + server fan-out
+  network.rs              NetworkSpec + ChainCtx
+  domain.rs               serializable wire types (source for bindings)
+  mock/                   deterministic generators (feature = "mock")
+artifacts/                pinned SCALE metadata for subxt codegen
+bindings/                 generated *.ts (committed)
+migrations/               sqlx migrations (baked into the binary)
+web/                      Nuxt 4 frontend
+  app/{components,composables,pages,stores,utils,...}
+deploy/docker/            Dockerfile.backend + Dockerfile.web
+end2end/                  Playwright suite
+tests/                    Rust integration tests (all #[ignore])
+docs/                     deployment + ops + plans
 ```
 
 ## Licensing
