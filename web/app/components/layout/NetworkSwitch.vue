@@ -122,7 +122,7 @@ function toggle() {
   right: 0;
   min-width: 240px;
   padding: 6px;
-  background: var(--bg-elev);
+  background: var(--bg-elev-solid);
   border: 1px solid var(--line-2);
   border-radius: 10px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
