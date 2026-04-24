@@ -83,6 +83,22 @@ pub const RPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// stuck iterator still fails the request.
 pub const RPC_ITER_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Dispatch the subxt handshake based on the URL scheme. `from_insecure_url`
+/// is required for plaintext `ws://` / `http://` endpoints — subxt rejects
+/// them from `from_url` by default. In-cluster traffic (ClusterIP, no TLS
+/// terminator on a hop that never leaves the pod network) opts in here;
+/// `wss://` / `https://` keep the stricter path and its safety net against
+/// accidental plaintext connections to public nodes.
+async fn connect_client(
+    endpoint: &str,
+) -> Result<AllfeatClient, subxt::error::OnlineClientError> {
+    if endpoint.starts_with("ws://") || endpoint.starts_with("http://") {
+        AllfeatClient::from_insecure_url(endpoint).await
+    } else {
+        AllfeatClient::from_url(endpoint).await
+    }
+}
+
 /// Wrap an RPC future with [`RPC_CALL_TIMEOUT`]. A timeout is routed to
 /// [`DataError::Transport`] so [`RpcClient::subxt`]'s retry-on-transport
 /// path can recover from a mid-call freeze without the caller having to
@@ -295,7 +311,7 @@ impl RpcClient {
         // that hasn't finished TLS/metadata negotiation in a few seconds is
         // almost always stuck (DNS stall, silent drop) and the caller is
         // better served by a fast `Transport` error than a 30 s hang.
-        let connect = AllfeatClient::from_url(&self.endpoint);
+        let connect = connect_client(&self.endpoint);
         let client = match tokio::time::timeout(RPC_CONNECT_TIMEOUT, connect).await {
             Ok(r) => r.map_err(DataError::from)?,
             Err(_) => {
@@ -707,8 +723,7 @@ async fn ensure_watcher_client(
     if let Some(c) = g.as_ref() {
         return Ok(c.clone());
     }
-    let connect = AllfeatClient::from_url(endpoint);
-    let client = match tokio::time::timeout(RPC_CONNECT_TIMEOUT, connect).await {
+    let client = match tokio::time::timeout(RPC_CONNECT_TIMEOUT, connect_client(endpoint)).await {
         Ok(r) => r.map_err(DataError::from)?,
         Err(_) => {
             return Err(DataError::Transport(format!(
