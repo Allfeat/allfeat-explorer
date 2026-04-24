@@ -30,13 +30,13 @@ pub fn aura_slot(digest: &Digest) -> Option<u64> {
     })
 }
 
-/// Pick the block author from `(slot, authorities)`. Returns `None` if the
-/// authority set is empty (a degenerate dev-chain state we still render).
-pub fn author_from_slot(slot: u64, authorities: &[AccountId32]) -> Option<&AccountId32> {
-    if authorities.is_empty() {
+/// Pick the block author from `(slot, validators)`. Returns `None` if the
+/// validator set is empty (a degenerate dev-chain state we still render).
+pub fn author_from_slot(slot: u64, validators: &[AccountId32]) -> Option<&AccountId32> {
+    if validators.is_empty() {
         return None;
     }
-    authorities.get((slot % authorities.len() as u64) as usize)
+    validators.get((slot % validators.len() as u64) as usize)
 }
 
 /// Pull the on-chain Block view for `at`. `finalized_head` lets the caller
@@ -139,28 +139,28 @@ async fn resolve_author(
         return Ok((String::from("unknown"), String::from("unknown")));
     };
 
-    let authorities_value = with_timeout("fetch_aura_authorities", async {
+    // `aura.authorities()` stores `sr25519::Public` session keys, not account
+    // IDs — treating those bytes as an SS58 address yields unrelated (empty)
+    // accounts. `session.validators()` is rebuilt in lockstep with the Aura
+    // authority set (pallet-aura's `OneSessionHandler::on_new_session` maps
+    // validators → session keys in order), so the same `slot % len` index
+    // lands on the producing validator's actual account.
+    let validators_value = with_timeout("fetch_session_validators", async {
         at.storage()
-            .try_fetch(allfeat::storage().aura().authorities(), ())
+            .try_fetch(allfeat::storage().session().validators(), ())
             .await
-            .map_err(|e| DataError::Rpc(format!("fetch aura authorities: {e}")))
+            .map_err(|e| DataError::Rpc(format!("fetch session validators: {e}")))
     })
     .await?;
-    let Some(authorities_value) = authorities_value else {
+    let Some(validators_value) = validators_value else {
         return Ok((String::from("unknown"), String::from("unknown")));
     };
 
-    // The authorities entry is `BoundedVec<AuthorityId, MaxAuthorities>`
-    // where `AuthorityId` is `sr25519::Public` — a `[u8; 32]` newtype. We
-    // decode into a plain `Vec<[u8; 32]>` so we don't drag the generated
-    // BoundedVec wrapper into the mapper.
-    let authority_bytes: Vec<[u8; 32]> = authorities_value
-        .decode_as()
-        .map_err(|e| DataError::Decode(format!("decode aura authorities: {e}")))?;
+    let validators: Vec<AccountId32> = validators_value
+        .decode()
+        .map_err(|e| DataError::Decode(format!("decode session validators: {e}")))?;
 
-    let authorities: Vec<AccountId32> =
-        authority_bytes.into_iter().map(AccountId32::from).collect();
-    let Some(author_id) = author_from_slot(slot, &authorities) else {
+    let Some(author_id) = author_from_slot(slot, &validators) else {
         return Ok((String::from("unknown"), String::from("unknown")));
     };
 

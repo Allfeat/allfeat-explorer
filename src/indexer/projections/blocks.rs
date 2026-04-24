@@ -120,27 +120,26 @@ async fn resolve_author_bytes(
         return Ok(None);
     };
 
-    let authorities_value = with_timeout("fetch_aura_authorities", async {
+    // See `mappers::blocks::resolve_author`: `aura.authorities()` exposes
+    // session keys, not accounts. `session.validators()` is the accounts
+    // list that Aura's authority set is built from, in the same order — so
+    // the slot modulo still lands on the right producer.
+    let validators_value = with_timeout("fetch_session_validators", async {
         at.storage()
-            .try_fetch(allfeat::storage().aura().authorities(), ())
+            .try_fetch(allfeat::storage().session().validators(), ())
             .await
-            .map_err(|e| DataError::Rpc(format!("fetch aura authorities: {e}")))
+            .map_err(|e| DataError::Rpc(format!("fetch session validators: {e}")))
     })
     .await?;
-    let Some(authorities_value) = authorities_value else {
+    let Some(validators_value) = validators_value else {
         return Ok(None);
     };
 
-    // Same dance as in `mappers::blocks`: decode into raw `[u8; 32]`
-    // rather than dragging the generated `BoundedVec<AuthorityId, _>`
-    // wrapper through the indexer code.
-    let authority_bytes: Vec<[u8; 32]> = authorities_value
-        .decode_as()
-        .map_err(|e| DataError::Decode(format!("decode aura authorities: {e}")))?;
-    let authorities: Vec<AccountId32> =
-        authority_bytes.into_iter().map(AccountId32::from).collect();
+    let validators: Vec<AccountId32> = validators_value
+        .decode()
+        .map_err(|e| DataError::Decode(format!("decode session validators: {e}")))?;
 
-    Ok(author_from_slot(slot, &authorities).map(|id| {
+    Ok(author_from_slot(slot, &validators).map(|id| {
         let mut out = [0u8; 32];
         out.copy_from_slice(id.as_ref());
         out
