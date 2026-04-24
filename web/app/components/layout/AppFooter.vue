@@ -20,20 +20,13 @@ const connection = useConnectionState()
 const { info: buildInfo } = useBuildInfo()
 const YEAR = new Date().getFullYear()
 
-// Back-fill the API half with "…" until the `/meta` fetch resolves, so
-// the strip stays the same width between SSR and hydration. `unknown`
-// shows up when a backend was built outside a git checkout (Docker
-// images without the repo mounted) — rendering it verbatim is better
-// than hiding the gap.
-const frontendStamp = computed(() => {
-  const f = buildInfo.value.frontend
-  return `${f.version} · ${f.gitSha}`
-})
-const apiStamp = computed(() => {
-  const a = buildInfo.value.api
-  if (!a.version || !a.gitSha) return '…'
-  return `${a.version} · ${a.gitSha}`
-})
+// API version resolves after the `/meta` fetch; fall back to "…" so
+// the strip stays the same width between SSR and hydration. The git
+// sha is still fetched (useful in dev tools / bug reports) but we
+// don't surface it in the footer — the version alone is the signal
+// most readers actually care about.
+const frontendVersion = computed(() => buildInfo.value.frontend.version)
+const apiVersion = computed(() => buildInfo.value.api.version ?? '…')
 </script>
 
 <template>
@@ -74,7 +67,7 @@ const apiStamp = computed(() => {
 
     <div class="container footer-bottom">
       <span class="mono footer-build">
-        © {{ YEAR }} ALLFEAT FOUNDATION · WEB {{ frontendStamp }} · API {{ apiStamp }}
+        © {{ YEAR }} ALLFEAT FOUNDATION · WEB v{{ frontendVersion }} · API v{{ apiVersion }}
       </span>
       <span class="footer-live">
         <ClientOnly>
