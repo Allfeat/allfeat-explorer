@@ -2,7 +2,6 @@
 #[tokio::main]
 async fn main() {
     use std::net::SocketAddr;
-    use std::sync::Arc;
 
     #[cfg(not(feature = "mock"))]
     use allfeat_explorer::indexer;
@@ -13,9 +12,6 @@ async fn main() {
     use axum::http::{header, HeaderName, HeaderValue, Method};
     use axum::routing::get;
     use axum::Router;
-    use tower_governor::governor::GovernorConfigBuilder;
-    use tower_governor::key_extractor::SmartIpKeyExtractor;
-    use tower_governor::GovernorLayer;
     use tower_http::cors::{AllowOrigin, CorsLayer};
     use tower_http::set_header::SetResponseHeaderLayer;
     use tower_http::trace::TraceLayer;
@@ -336,62 +332,6 @@ async fn main() {
         );
     }
 
-    // Rate-limiting opt-out for test + local-dev scenarios. Playwright in
-    // particular fans out parallel browser workers that blow past the
-    // default REST budget on cold cache fetches; the escape hatch keeps
-    // the prod layer honest while letting the suite run unthrottled.
-    let disable_rate_limit = std::env::var("EXPLORER_DISABLE_RATE_LIMIT")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false);
-    if disable_rate_limit {
-        tracing::warn!(
-            "EXPLORER_DISABLE_RATE_LIMIT set — /api/v1/* and /api/v1/live \
-             are NOT rate-limited. Intended for local dev / e2e tests only."
-        );
-    }
-
-    // Per-IP governor for `/api/v1/live` WebSocket upgrades. Five new
-    // connections/second with a burst of ten is comfortably above a
-    // real user flipping tabs while still crushing a bot dialling us
-    // in a tight loop. `SmartIpKeyExtractor` prefers `X-Forwarded-For`
-    // / `X-Real-IP` when present, so we key on the actual client IP
-    // behind the reverse proxy.
-    let ws_governor = Arc::new(
-        GovernorConfigBuilder::default()
-            .key_extractor(SmartIpKeyExtractor)
-            .per_second(5)
-            .burst_size(10)
-            .finish()
-            .expect("static governor config must be valid"),
-    );
-    let ws_limiter = ws_governor.limiter().clone();
-
-    // REST governor — a much wider budget than WS since a single page
-    // load issues a handful of parallel requests (dashboard = 4-5
-    // fetches) and the Nuxt SSR proxy compounds that. 100 req/s burst
-    // 200 leaves plenty of room for bursty dashboards while still
-    // catching an abusive script.
-    let api_governor = Arc::new(
-        GovernorConfigBuilder::default()
-            .key_extractor(SmartIpKeyExtractor)
-            .per_second(100)
-            .burst_size(200)
-            .finish()
-            .expect("static governor config must be valid"),
-    );
-    let api_limiter = api_governor.limiter().clone();
-
-    // Background task that periodically evicts stale entries from both
-    // limiters so long-running processes don't grow unbounded.
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            ticker.tick().await;
-            ws_limiter.retain_recent();
-            api_limiter.retain_recent();
-        }
-    });
-
     // CORS for `/api/v1/*`. Permissive in dev (wildcard), allowlist in
     // prod. GET + OPTIONS only — the REST surface is read-only, so no
     // point advertising the other methods in preflights.
@@ -408,37 +348,24 @@ async fn main() {
             .allow_headers([header::CONTENT_TYPE, header::ACCEPT])
     };
 
-    // REST router — the bulk of the `/api/v1` surface. CORS, rate
-    // limiter and prometheus layer all apply here but *not* to the
-    // health/metrics routers below, which kubelet polls on a short
-    // interval and must always succeed.
-    let api_router: Router = {
-        let router = api::router(app_state.clone()).layer(cors_layer);
-        if disable_rate_limit {
-            router
-        } else {
-            router.layer(GovernorLayer::new(api_governor))
-        }
-    };
+    // REST router — the bulk of the `/api/v1` surface. CORS + prometheus
+    // layers apply here but *not* to the health/metrics routers below,
+    // which kubelet polls on a short interval and must always succeed.
+    // No rate limiting: the API is only reachable from inside the cluster,
+    // so an abusive client would already have broken the network boundary.
+    let api_router: Router = api::router(app_state.clone()).layer(cors_layer);
 
     // Live-stream WebSocket endpoint. Relocated under `/api/v1/live`
     // so the whole public surface lives under one path prefix.
-    let ws_router: Router = {
-        let router = Router::new()
-            .route("/api/v1/live", get(ws_handler))
-            .with_state(app_state.clone());
-        if disable_rate_limit {
-            router
-        } else {
-            router.layer(GovernorLayer::new(ws_governor))
-        }
-    };
+    let ws_router: Router = Router::new()
+        .route("/api/v1/live", get(ws_handler))
+        .with_state(app_state.clone());
 
     // Health / readiness probes. `/healthz` never touches upstream state
     // (kube's liveness probe toggles pod restarts — don't let a transient
     // RPC hiccup nuke the pod). `/readyz` reads provider state, so it
-    // needs the shared `AppState`. Kept out of the rate-limited + CORS
-    // layers so kubelet polls always resolve.
+    // needs the shared `AppState`. Kept out of the CORS layer so kubelet
+    // polls always resolve.
     let health_router: Router = Router::new()
         .route("/api/v1/healthz", get(healthz))
         .route("/api/v1/readyz", get(readyz))
@@ -446,8 +373,8 @@ async fn main() {
 
     // Prometheus scrape endpoint. No state required — the handle moved
     // into the closure renders the currently collected metrics on every
-    // call. Also kept out of CORS + rate limiting so the Prometheus
-    // server can always reach it.
+    // call. Also kept out of CORS so the Prometheus server can always
+    // reach it.
     let metrics_router: Router = Router::new().route(
         "/api/v1/metrics",
         get(move || async move { metric_handle.render() }),
@@ -484,16 +411,10 @@ async fn main() {
 
     tracing::info!(%listen_addr, "listening");
     let listener = tokio::net::TcpListener::bind(&listen_addr).await.unwrap();
-    // `into_make_service_with_connect_info::<SocketAddr>()` so the rate
-    // limiter's `SmartIpKeyExtractor` can fall back to the peer address
-    // when no forwarded header is present (direct dev connections).
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .unwrap();
+    axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
 }
 
 /// Resolve when the process receives either Ctrl-C or SIGTERM

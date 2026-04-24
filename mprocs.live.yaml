@@ -29,7 +29,6 @@ procs:
   api:
     shell: cargo run --features ssr --bin allfeat-explorer
     env:
-      EXPLORER_DISABLE_RATE_LIMIT: "1"
       RPC_ENDPOINT_MELODIE: "ws://127.0.0.1:9944"
       DATABASE_URL: "postgres://explorer:explorer@127.0.0.1:54320/explorer"
 

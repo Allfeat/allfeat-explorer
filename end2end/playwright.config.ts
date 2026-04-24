@@ -26,13 +26,7 @@ const API_URL = "http://127.0.0.1:8088";
 const features = process.env.EXPLORER_FEATURES ?? "ssr,mock";
 const backendCmd = `cargo run --quiet --features ${features} --bin allfeat-explorer`;
 
-// Playwright fans out one browser per CPU core and can easily exceed
-// the prod-grade REST governor (100 req/s) during the baseline sweep.
-// The backend honours `EXPLORER_DISABLE_RATE_LIMIT=1` as an escape hatch
-// for test + dev runs; real deploys leave it unset.
-const backendEnv: Record<string, string> = {
-  EXPLORER_DISABLE_RATE_LIMIT: "1",
-};
+const backendEnv: Record<string, string> = {};
 for (const [k, v] of Object.entries(process.env)) {
   if (k.startsWith("RPC_ENDPOINT_") && v) {
     backendEnv[k] = v;

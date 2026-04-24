@@ -52,11 +52,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], option
 # debugger. `set-header` is used to stamp security headers
 # (X-Content-Type-Options, Referrer-Policy, ...) on every response.
 tower-http = { version = "0.6", features = ["trace", "set-header", "cors"], optional = true }
-# Per-IP rate limiter for the `/ws` route (and other public surfaces we
-# want to cap). `SmartIpKeyExtractor` reads `X-Forwarded-For` / `X-Real-IP`
-# so clients are keyed by real IP behind a reverse proxy rather than the
-# proxy's own loopback address.
-tower_governor = { version = "0.8", default-features = false, features = ["axum"], optional = true }
 # Prometheus HTTP metrics exporter for axum. Pairs a tower `Layer` that
 # tracks every request with a `metric_handle` whose `.render()` feeds the
 # `/metrics` endpoint. Relies on the `metrics` facade, so custom counters
@@ -119,7 +114,6 @@ ssr = [
     "dep:tracing",
     "dep:tracing-subscriber",
     "dep:tower-http",
-    "dep:tower_governor",
     "dep:axum-prometheus",
     "dep:metrics",
     "dep:tokio-stream",
