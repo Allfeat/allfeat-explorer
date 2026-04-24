@@ -10,14 +10,30 @@ import { storeToRefs } from 'pinia'
 import { useNetworksStore } from '~/stores/networks'
 import { useLiveStore } from '~/stores/live'
 import { useConnectionState } from '~/composables/useConnectionState'
+import { useBuildInfo } from '~/composables/useBuildInfo'
 
 const networks = useNetworksStore()
 const live = useLiveStore()
 const { head, finalizedHead } = storeToRefs(live)
 const connection = useConnectionState()
 
-const BUILD_LABEL = '1.0.0-dev'
+const { info: buildInfo } = useBuildInfo()
 const YEAR = new Date().getFullYear()
+
+// Back-fill the API half with "…" until the `/meta` fetch resolves, so
+// the strip stays the same width between SSR and hydration. `unknown`
+// shows up when a backend was built outside a git checkout (Docker
+// images without the repo mounted) — rendering it verbatim is better
+// than hiding the gap.
+const frontendStamp = computed(() => {
+  const f = buildInfo.value.frontend
+  return `${f.version} · ${f.gitSha}`
+})
+const apiStamp = computed(() => {
+  const a = buildInfo.value.api
+  if (!a.version || !a.gitSha) return '…'
+  return `${a.version} · ${a.gitSha}`
+})
 </script>
 
 <template>
@@ -25,11 +41,11 @@ const YEAR = new Date().getFullYear()
   <footer class="footer">
     <div class="container footer-inner">
       <div class="footer-col" style="flex: 1;">
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-          <span class="brand-word">Allfeat<span class="dot">.</span></span>
+        <div class="footer-brand">
+          <BrandLogo class="brand-mark" />
+          <span class="brand-suffix">Explorer</span>
         </div>
         <div style="font-size: 11px;">Substrate-based chain explorer · Ref-impl</div>
-        <div style="font-size: 11px; margin-top: 4px;">Built for the living network.</div>
       </div>
 
       <div class="footer-col">
@@ -57,7 +73,9 @@ const YEAR = new Date().getFullYear()
     </div>
 
     <div class="container footer-bottom">
-      <span class="mono footer-build">© {{ YEAR }} ALLFEAT FOUNDATION · BUILD {{ BUILD_LABEL }}</span>
+      <span class="mono footer-build">
+        © {{ YEAR }} ALLFEAT FOUNDATION · WEB {{ frontendStamp }} · API {{ apiStamp }}
+      </span>
       <span class="footer-live">
         <ClientOnly>
           <ConnectionIndicator :state="connection" />
@@ -72,6 +90,13 @@ const YEAR = new Date().getFullYear()
 </template>
 
 <style scoped lang="scss">
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
 .footer-bottom {
   display: flex;
   justify-content: space-between;

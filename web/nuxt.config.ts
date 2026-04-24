@@ -1,4 +1,24 @@
+import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+
+// Frontend build stamp. CI / Docker builds can inject NUXT_PUBLIC_GIT_SHA
+// directly (no `.git` in the image); local builds fall back to the
+// current HEAD via `git rev-parse`. Version comes from package.json so
+// bumping one place keeps everything in sync.
+const frontendVersion = (JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
+) as { version?: string }).version ?? '0.0.0'
+
+const frontendGitSha = process.env.NUXT_PUBLIC_GIT_SHA
+  ?? (() => {
+    try {
+      return execSync('git rev-parse --short=7 HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString().trim()
+    } catch {
+      return 'unknown'
+    }
+  })()
 
 export default defineNuxtConfig({
   srcDir: 'app/',
@@ -70,6 +90,8 @@ export default defineNuxtConfig({
       // comment above). In prod, override via NUXT_PUBLIC_WS_BASE so the
       // reverse proxy handles both HTTP and WS uniformly.
       wsBase: 'ws://127.0.0.1:8088/api/v1',
+      frontendVersion,
+      frontendGitSha,
     },
   },
 

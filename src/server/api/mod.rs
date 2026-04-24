@@ -13,6 +13,7 @@ pub mod blocks;
 pub mod error;
 pub mod extrinsics;
 pub mod indexing;
+pub mod meta;
 pub mod metadata;
 pub mod networks;
 pub mod runtime;
@@ -141,6 +142,8 @@ pub fn router(state: AppState) -> Router {
         )
         // Indexing status — consumed by the UI banner.
         .route("/api/v1/indexing/status", get(indexing::indexer_status))
+        // Build identity — crate version + git sha for the footer.
+        .route("/api/v1/meta", get(meta::build_info))
         .with_state(state)
 }
 
