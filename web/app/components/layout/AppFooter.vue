@@ -52,16 +52,15 @@ const apiVersion = computed(() => buildInfo.value.api.version ?? '…')
 
       <div class="footer-col">
         <div class="ui-label">Developers</div>
-        <a href="#">RPC endpoints</a>
-        <a href="#">Runtime metadata</a>
-        <a href="#">GitHub</a>
+        <a href="https://github.com/Allfeat" target="_blank" rel="noopener noreferrer">Allfeat GitHub</a>
+        <a href="https://github.com/paritytech/subxt" target="_blank" rel="noopener noreferrer">subxt</a>
+        <a href="https://polkadot.js.org/docs/api/" target="_blank" rel="noopener noreferrer">polkadot.js API</a>
       </div>
 
       <div class="footer-col">
         <div class="ui-label">Resources</div>
-        <a href="#">Docs</a>
-        <a href="#">Status</a>
-        <a href="#">Brand kit</a>
+        <a href="https://app.allfeat.org" target="_blank" rel="noopener noreferrer">Allfeat App</a>
+        <a href="https://docs.polkadot.com/" target="_blank" rel="noopener noreferrer">Polkadot-SDK</a>
       </div>
     </div>
 

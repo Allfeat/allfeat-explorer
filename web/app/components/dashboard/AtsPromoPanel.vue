@@ -14,16 +14,24 @@ const { queryString } = useNetworkLink()
     <div>
       <div class="ui-label ats-promo-kicker">Allfeat Timestamp · v1</div>
       <h2 class="ats-promo-title">
-        Every song on Allfeat<br>
-        gets a <span class="ats-promo-highlight">cryptographic<br>heartbeat</span>.
+        Every work on Allfeat<br>
+        gets a <span class="ats-promo-highlight">heartbeat</span><br>
+        from a <span class="ats-promo-highlight">provable origin</span>.
       </h2>
       <p v-if="totalTimestamped != null" class="ats-promo-lede">
-        {{ fmtInt(totalTimestamped) }} works timestamped · 33 bytes on-chain each · zero off-chain leakage.
+        {{ fmtInt(totalTimestamped) }} works timestamped · solid hashing algorithm
+        designed to prove authorship of every musical work.
       </p>
     </div>
     <div class="ats-promo-actions">
-      <NuxtLink :to="`/ats${queryString}`" class="btn primary">Explore ATS</NuxtLink>
-      <button type="button" class="btn ghost" disabled>Protocol spec</button>
+      <AtsProtectCta variant="primary" />
+      <NuxtLink :to="`/ats${queryString}`" class="btn ghost">Explore ATS</NuxtLink>
+      <a
+        href="https://github.com/Allfeat/ats-sdk"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="btn ghost"
+      >Protocol SDK</a>
     </div>
   </div>
 </template>

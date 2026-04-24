@@ -10,9 +10,9 @@ import type { AtsFeedItem, AtsStats } from '@bindings'
 definePageMeta({ name: 'ats-list' })
 useSeoMeta({
   title: 'ATS · Allfeat Explorer',
-  description: 'Allfeat Timestamp registry — every song on Allfeat gets a cryptographic heartbeat.',
+  description: 'Allfeat Timestamp registry — every work gets a cryptographic heartbeat with a provable origin.',
   ogTitle: 'ATS · Allfeat',
-  ogDescription: 'A tiny on-chain timestamp that says: this track existed, right here, right now.',
+  ogDescription: 'A tiny on-chain timestamp that says: this work existed, right here, right now, from a provable origin.',
   ogType: 'website',
 })
 
@@ -53,13 +53,17 @@ async function handleRefresh() {
 
     <div class="ats-hero">
       <h1 class="ats-h1">
-        Every song gets<br>
+        Every work gets<br>
         a <span style="color: var(--teal-500); font-style: italic;">heartbeat</span>.
       </h1>
       <p class="ats-lede">
-        A tiny on-chain timestamp that says <em>this track existed, right here, right now</em> —
-        forever. No paperwork, no middlemen.
+        A tiny on-chain timestamp that says <em>this work existed, right here, right now</em> —
+        from a <span style="color: var(--teal-500); font-style: italic;">provable origin</span>, forever.
       </p>
+
+      <div class="ats-hero-cta">
+        <AtsProtectCta variant="primary" />
+      </div>
 
       <div v-if="stats" style="margin-top: 28px;">
         <AtsStatsStrip :stats="stats" />
@@ -141,6 +145,10 @@ async function handleRefresh() {
   max-width: 560px;
   margin-top: 18px;
   line-height: 1.5;
+}
+
+.ats-hero-cta {
+  margin-top: 24px;
 }
 
 .cursor-nav {
