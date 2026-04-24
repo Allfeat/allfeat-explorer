@@ -35,7 +35,7 @@ WORKDIR /app
 # the extra complexity of a "dependencies-first" pre-build layer (copy
 # Cargo.toml, stub main.rs, build, then overwrite) isn't worth it once the
 # registry cache is hot.
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY migrations ./migrations
 COPY artifacts ./artifacts
