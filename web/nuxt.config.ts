@@ -6,7 +6,11 @@ export default defineNuxtConfig({
 
   typescript: {
     strict: true,
-    typeCheck: true,
+    // Opt-out via `NUXT_TYPECHECK=false` in Docker/CI builds: the vue-tsc
+    // fork that `typeCheck: true` spawns keeps an IPC channel open past
+    // the "Build complete!" point in non-tty runners, wedging the image
+    // build. Local `bun run build` keeps the check on by default.
+    typeCheck: process.env.NUXT_TYPECHECK !== 'false',
   },
 
   alias: {

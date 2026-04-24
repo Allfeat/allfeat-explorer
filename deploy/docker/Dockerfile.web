@@ -41,8 +41,11 @@ RUN cd web && bun x nuxt prepare
 
 # `nuxt build` emits the universal Nitro server under `web/.output/`.
 # Setting NODE_ENV=production turns on Vue's prod optimisations and tree
-# shaking of dev-only modules.
+# shaking of dev-only modules. NUXT_TYPECHECK=false disables the vue-tsc
+# fork (see nuxt.config.ts): its IPC channel stays open past "Build
+# complete!" in non-tty runners and wedges the image build.
 ENV NODE_ENV=production
+ENV NUXT_TYPECHECK=false
 RUN cd web && bun run build
 
 # ---------------------------------------------------------------------------
