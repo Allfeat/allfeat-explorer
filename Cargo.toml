@@ -52,7 +52,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], option
 # INFO with latency, so a stuck handler is visible without attaching a
 # debugger. `set-header` is used to stamp security headers
 # (X-Content-Type-Options, Referrer-Policy, ...) on every response.
-tower-http = { version = "0.6", features = ["trace", "set-header", "cors"], optional = true }
+tower-http = { version = "0.6", features = ["trace", "set-header", "cors", "compression-gzip", "compression-br"], optional = true }
 # Prometheus HTTP metrics exporter for axum. Pairs a tower `Layer` that
 # tracks every request with a `metric_handle` whose `.render()` feeds the
 # `/metrics` endpoint. Relies on the `metrics` facade, so custom counters

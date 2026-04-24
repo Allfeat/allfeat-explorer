@@ -12,6 +12,7 @@ async fn main() {
     use axum::http::{header, HeaderName, HeaderValue, Method};
     use axum::routing::get;
     use axum::Router;
+    use tower_http::compression::CompressionLayer;
     use tower_http::cors::{AllowOrigin, CorsLayer};
     use tower_http::set_header::SetResponseHeaderLayer;
     use tower_http::trace::TraceLayer;
@@ -353,7 +354,13 @@ async fn main() {
     // which kubelet polls on a short interval and must always succeed.
     // No rate limiting: the API is only reachable from inside the cluster,
     // so an abusive client would already have broken the network boundary.
-    let api_router: Router = api::router(app_state.clone()).layer(cors_layer);
+    //
+    // Compression: gzip + brotli negotiated via Accept-Encoding. Paginated
+    // lists compress well (homogeneous JSON) and the whole surface is
+    // read-only, so no risk of a BREACH-class side channel.
+    let api_router: Router = api::router(app_state.clone())
+        .layer(CompressionLayer::new())
+        .layer(cors_layer);
 
     // Live-stream WebSocket endpoint. Relocated under `/api/v1/live`
     // so the whole public surface lives under one path prefix.
