@@ -39,6 +39,22 @@ export default defineNuxtConfig({
 
   modules: ['@pinia/nuxt', '@vueuse/nuxt', '@nuxtjs/color-mode'],
 
+  // Override the SWR cache storage in dev to the in-memory driver. The
+  // default `fs` driver writes cache entries mirroring the URL path,
+  // which collides when a parent route (`/ats`) and its sub-routes
+  // (`/ats/[id]`) are both cached — the parent wants `ats` as a file
+  // and the children need `ats/` as a directory. Memory storage
+  // sidesteps the filesystem entirely and is fine in dev (cache is
+  // rebuilt on every restart anyway). Prod still uses the default disk
+  // driver via the top-level `storage` key (untouched here).
+  nitro: {
+    devStorage: {
+      cache: {
+        driver: 'memory',
+      },
+    },
+  },
+
   // Nitro route-level stale-while-revalidate. Cache keys include the
   // full URL (including `?network=`), so per-network SSR stays isolated.
   // Listings / dashboards use a short window aligned on block time;
