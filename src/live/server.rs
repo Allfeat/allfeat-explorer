@@ -33,13 +33,13 @@ use axum::response::{IntoResponse, Response};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
-use crate::data::{BoxStream, ChainData};
-use crate::domain::{AtsFeedItem, Block, Transfer};
+use crate::data::ChainData;
+use crate::live::encoder::{EncoderEntry, EncoderHub};
 use crate::live::protocol::{ClientMsg, ServerMsg, Topic};
-use crate::network::{by_id_or_default, ChainCtx, NetworkSpec};
+use crate::network::{by_id_or_default, NetworkSpec};
 use crate::server::AppState;
 
 /// Heartbeat cadence. Browsers tolerate minutes of idleness, but some
@@ -290,8 +290,14 @@ async fn run_receiver(
                         if forwarders.contains_key(&topic) {
                             continue; // already subscribed, no-op
                         }
-                        match spawn_forwarder(topic, state.provider.clone(), spec, sink_tx.clone())
-                            .await
+                        match spawn_forwarder(
+                            topic,
+                            state.encoder_hub.clone(),
+                            state.provider.clone(),
+                            spec,
+                            sink_tx.clone(),
+                        )
+                        .await
                         {
                             Ok(handle) => {
                                 forwarders.insert(topic, handle);
@@ -337,90 +343,56 @@ async fn run_receiver(
     }
 }
 
-/// Open the right provider stream for a topic and spawn a task that
-/// forwards every item into the sink. Returns the handle so the session
-/// can abort it on unsubscribe / close. Provider errors at subscribe time
-/// bubble back as an [`Error`] frame — the connection stays usable.
+/// Subscribe to the per-(network, topic) shared encoder on the hub and
+/// spawn a session-local task that pumps pre-encoded frames into the
+/// sink. Returns the handle so the session can abort it on unsubscribe /
+/// close. Provider errors at subscribe time bubble back as an [`Error`]
+/// frame — the connection stays usable.
+///
+/// The `Arc<EncoderEntry>` lease is moved into the forwarder task so its
+/// lifetime follows the task: when the session aborts the handle (or the
+/// task exits on its own), the lease is dropped. The last lease to drop
+/// for a given (network, topic) tears down the encoder task and releases
+/// the provider subscription.
 async fn spawn_forwarder(
     topic: Topic,
+    encoder_hub: Arc<EncoderHub>,
     provider: Arc<dyn ChainData>,
     spec: &'static NetworkSpec,
     sink_tx: mpsc::Sender<Message>,
 ) -> Result<JoinHandle<()>, String> {
-    // `now_ms` only matters for mock-mode context derivation inside the
-    // producer; the stream itself is wall-clock driven. Passing 0 keeps
-    // the RPC path happy (it ignores now_ms) and the mock producer has
-    // its own clock.
-    let ctx = ChainCtx::new(spec, 0);
-    match topic {
-        Topic::Blocks => {
-            let stream = provider
-                .subscribe_blocks(ctx)
-                .await
-                .map_err(|e| format!("subscribe blocks: {e}"))?;
-            Ok(tokio::spawn(forward::<Block>(stream, sink_tx, topic)))
+    let (lease, rx) = encoder_hub.subscribe(provider, spec, topic).await?;
+    Ok(tokio::spawn(forward_encoded(lease, rx, sink_tx, topic)))
+}
+
+/// Session forwarder: pumps pre-encoded [`Message`] frames from the
+/// shared encoder broadcast into the session sink. Exits when the
+/// broadcast is closed (encoder task gone) or the sink is closed
+/// (session winding down). A `Lagged` receiver skips the missed
+/// frames and keeps going — the frontend treats the live stream as a
+/// lossy feed anyway (`useLiveBlocks` reconciles via the next head
+/// update).
+async fn forward_encoded(
+    _lease: Arc<EncoderEntry>,
+    mut rx: broadcast::Receiver<Message>,
+    sink_tx: mpsc::Sender<Message>,
+    topic: Topic,
+) {
+    loop {
+        match rx.recv().await {
+            Ok(msg) => {
+                if sink_tx.send(msg).await.is_err() {
+                    return;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                tracing::debug!(?topic, skipped, "forwarder: broadcast lagged");
+            }
+            Err(broadcast::error::RecvError::Closed) => {
+                tracing::debug!(?topic, "forwarder: encoder broadcast closed");
+                return;
+            }
         }
-        Topic::Transfers => {
-            let stream = provider
-                .subscribe_transfers(ctx)
-                .await
-                .map_err(|e| format!("subscribe transfers: {e}"))?;
-            Ok(tokio::spawn(forward::<Transfer>(stream, sink_tx, topic)))
-        }
-        Topic::AtsFeed => {
-            let stream = provider
-                .subscribe_ats_feed(ctx)
-                .await
-                .map_err(|e| format!("subscribe ats_feed: {e}"))?;
-            Ok(tokio::spawn(forward::<AtsFeedItem>(stream, sink_tx, topic)))
-        }
-    }
-}
-
-/// Generic forwarder: pumps a provider stream into the sink as
-/// `ServerMsg`. Exits when the source stream ends (provider side dead) or
-/// the sink is closed (session winding down).
-async fn forward<T>(mut stream: BoxStream<T>, sink_tx: mpsc::Sender<Message>, topic: Topic)
-where
-    T: 'static + Send + Into<Payload>,
-{
-    while let Some(item) = stream.next().await {
-        let msg = match item.into() {
-            Payload::Block(b) => ServerMsg::Block { data: b },
-            Payload::Transfer(t) => ServerMsg::Transfer { data: t },
-            Payload::AtsItem(i) => ServerMsg::AtsItem { data: i },
-        };
-        if sink_tx.send(encode(&msg)).await.is_err() {
-            return;
-        }
-    }
-    tracing::debug!(?topic, "forwarder: provider stream ended");
-}
-
-/// Tagged union so one generic `forward` function can cover all three
-/// topics without a macro. The `Into` bounds let the item type pick its
-/// variant at the call site.
-enum Payload {
-    Block(Block),
-    Transfer(Transfer),
-    AtsItem(AtsFeedItem),
-}
-
-impl From<Block> for Payload {
-    fn from(v: Block) -> Self {
-        Payload::Block(v)
-    }
-}
-
-impl From<Transfer> for Payload {
-    fn from(v: Transfer) -> Self {
-        Payload::Transfer(v)
-    }
-}
-
-impl From<AtsFeedItem> for Payload {
-    fn from(v: AtsFeedItem) -> Self {
-        Payload::AtsItem(v)
     }
 }
 

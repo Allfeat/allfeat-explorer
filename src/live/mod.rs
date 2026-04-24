@@ -18,6 +18,8 @@ pub mod merge;
 pub mod protocol;
 
 #[cfg(feature = "ssr")]
+pub mod encoder;
+#[cfg(feature = "ssr")]
 pub mod server;
 
 pub use merge::{merge_live, LiveItem};

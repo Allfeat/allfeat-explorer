@@ -20,6 +20,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
 use crate::data::ChainData;
+use crate::live::encoder::EncoderHub;
 
 use super::config::ServerConfig;
 
@@ -72,6 +73,13 @@ pub struct AppState {
     /// that feed it only run when a pool is present.
     #[cfg(not(feature = "mock"))]
     pub author_lookup: Arc<AuthorLookup>,
+    /// Shared encoder/fanout for the live WebSocket. One task per
+    /// `(network, topic)` combo encodes each item once and rebroadcasts
+    /// the finished `Message`, so N subscribers don't trigger N
+    /// redundant `serde_json` passes per event. Lazy: entries are born
+    /// on first subscribe and torn down once the last session drops its
+    /// lease.
+    pub encoder_hub: Arc<EncoderHub>,
 }
 
 impl AppState {
@@ -148,6 +156,7 @@ impl AppState {
             network_lookup,
             #[cfg(not(feature = "mock"))]
             author_lookup: Arc::new(AuthorLookup::default()),
+            encoder_hub: EncoderHub::new(),
         }
     }
 
