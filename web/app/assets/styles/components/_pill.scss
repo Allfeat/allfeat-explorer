@@ -1,0 +1,57 @@
+// Status pills — success / fail / pending / neutral.
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 100px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  &.success {
+    color: var(--teal-500);
+    background: rgba(0, 177, 140, 0.08);
+    border-color: rgba(0, 177, 140, 0.25);
+  }
+
+  &.fail {
+    color: var(--red-500);
+    background: rgba(255, 74, 95, 0.08);
+    border-color: rgba(255, 74, 95, 0.25);
+  }
+
+  &.pending {
+    color: var(--cream-200);
+    background: rgba(196, 192, 177, 0.08);
+    border-color: rgba(196, 192, 177, 0.20);
+  }
+
+  &.neutral {
+    color: var(--ink-dim);
+    background: var(--chip-bg);
+    border-color: var(--chip-bd);
+  }
+}
+
+[data-theme="light"] .pill.success {
+  color: var(--teal-700);
+  background: rgba(5, 138, 110, 0.08);
+  border-color: rgba(5, 138, 110, 0.30);
+}
+
+[data-theme="light"] .pill.fail {
+  color: var(--red-700);
+  background: rgba(196, 61, 77, 0.08);
+  border-color: rgba(196, 61, 77, 0.30);
+}

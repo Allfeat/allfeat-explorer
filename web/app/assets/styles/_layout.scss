@@ -1,0 +1,168 @@
+// Layout primitives + utility classes — ported from the mockup.
+//
+// Canonical breakpoints (used consistently across components):
+//   xs:  480px  — small phones (iPhone SE)
+//   sm:  640px  — mobile max (iPhone 14/15, Pixel)
+//   md:  900px  — tablet portrait max (also the dashboard two-col switch)
+//   lg:  1100px — nav "More" collapse
+//   xl:  1280px — account/events nav collapse
+// Always use `max-width: Npx` — we design desktop-first and scale down.
+
+.container {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 56px;
+}
+
+@media (max-width: 1200px) {
+  .container {
+    padding: 0 40px;
+  }
+}
+
+@media (max-width: 900px) {
+  .container {
+    padding: 0 24px;
+  }
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding: 0 16px;
+  }
+}
+
+// Responsive visibility helpers. Use sparingly — prefer intrinsic reflow
+// (flex-wrap, grid auto-fit) over branching layouts.
+.hide-sm-down {
+  @media (max-width: 640px) { display: none !important; }
+}
+.hide-md-down {
+  @media (max-width: 900px) { display: none !important; }
+}
+.show-sm-down {
+  display: none;
+  @media (max-width: 640px) { display: initial; }
+}
+.show-md-down {
+  display: none;
+  @media (max-width: 900px) { display: initial; }
+}
+
+.grid {
+  display: grid;
+}
+
+.row {
+  display: flex;
+}
+
+.gap-8  { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+.gap-24 { gap: 24px; }
+.gap-32 { gap: 32px; }
+
+// Ambient dot grid — used on dark backgrounds.
+.dotgrid {
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+}
+
+.divider-v {
+  width: 1px;
+  background: var(--line);
+  align-self: stretch;
+}
+
+.divider-h {
+  height: 1px;
+  background: var(--line);
+}
+
+// Utility helpers.
+.muted  { color: var(--ink-dim); }
+.dim    { color: var(--ink-dimmer); }
+.nowrap { white-space: nowrap; }
+.right  { text-align: right; }
+.center { text-align: center; }
+.hidden { display: none !important; }
+.text-xs { font-size: 11px; }
+.text-sm { font-size: 12px; }
+
+// Staggered section reveal used on the dashboard.
+@keyframes fadeUp {
+  from { transform: translateY(12px); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.reveal {
+  opacity: 1;
+  animation: fadeUp 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+
+  &.d-1 { animation-delay: 0.05s; }
+  &.d-2 { animation-delay: 0.15s; }
+  &.d-3 { animation-delay: 0.25s; }
+  &.d-4 { animation-delay: 0.35s; }
+  &.d-5 { animation-delay: 0.45s; }
+  &.d-6 { animation-delay: 0.55s; }
+}
+
+// Route-level transition (Nuxt `app.pageTransition: { name: 'page', mode: 'out-in' }`).
+//
+// With `out-in`, NuxtPage unmounts the old route before mounting the
+// new one (required for the Transition component to see a child swap
+// through the intervening Suspense boundary — see NuxtPage source).
+// Pages no longer `await` their useFetch calls, so the new route's
+// setup completes synchronously and its enter animation runs immediately
+// — the table bodies show skeleton rows until the fetches resolve.
+.page-enter-active,
+.page-leave-active {
+  transition:
+    opacity 0.26s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+  // Safari won't promote the element to a composited layer for a plain
+  // `transform: translateY(...)` alone — it decides the transition is
+  // cheap enough to skip the GPU and often ends up batching the leave
+  // and enter into a single paint, which "eats" the fade entirely.
+  // `will-change` + `translate3d` forces the layer up front so the
+  // transition actually animates instead of snapping.
+  will-change: opacity, transform;
+  backface-visibility: hidden;
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 10px, 0);
+}
+
+.page-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -6px, 0);
+}
+
+.page-enter-to,
+.page-leave-from {
+  transform: translate3d(0, 0, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter-active,
+  .page-leave-active {
+    transition: opacity 0.15s linear;
+    transform: none !important;
+    will-change: auto;
+  }
+  .page-enter-from,
+  .page-leave-to,
+  .page-enter-to,
+  .page-leave-from {
+    transform: none;
+  }
+}

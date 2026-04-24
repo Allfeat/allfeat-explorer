@@ -1,0 +1,43 @@
+// Breadcrumb trail above page titles.
+
+.breadcrumb {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dimmer);
+  padding: 28px 0 0;
+  flex-wrap: wrap;
+
+  a {
+    color: var(--ink-dimmer);
+
+    &:hover {
+      color: var(--ink);
+    }
+  }
+
+  .sep {
+    color: var(--ink-muted);
+  }
+}
+
+@media (max-width: 640px) {
+  .breadcrumb {
+    padding: 20px 0 0;
+    gap: 8px;
+    // Longer crumbs (hashes, names) would force wrapping awkwardly;
+    // allow horizontal scroll so each crumb stays on a single line.
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+
+    &::-webkit-scrollbar { display: none; }
+
+    > * { flex-shrink: 0; }
+  }
+}

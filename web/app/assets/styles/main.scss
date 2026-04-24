@@ -1,0 +1,28 @@
+// Global stylesheet entry — loaded via nuxt.config.ts `css`.
+// All tokens are CSS custom properties: components reference them with
+// var(--X) directly, so no SCSS symbols need to be injected globally.
+
+@use 'tokens';
+@use 'reset';
+@use 'typography';
+@use 'layout';
+
+@use 'components/header';
+@use 'components/footer';
+@use 'components/panel';
+@use 'components/table';
+@use 'components/pill';
+@use 'components/chip';
+@use 'components/hash';
+@use 'components/kv';
+@use 'components/stat';
+@use 'components/tabs';
+@use 'components/btn';
+@use 'components/seg';
+@use 'components/breadcrumb';
+@use 'components/pagination';
+@use 'components/identicon';
+@use 'components/connection-pill';
+@use 'components/skeleton';
+@use 'components/hero';
+@use 'components/search';

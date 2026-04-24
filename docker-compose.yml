@@ -1,0 +1,69 @@
+# Local dev stack for the explorer indexer.
+#
+# Two Postgres instances:
+#
+#   postgres        → durable dev DB (named volume), port 54320
+#   postgres-test   → jetable DB for `cargo test` (tmpfs), port 54329
+#
+# The test instance uses tmpfs so a torn-down container leaves zero state
+# behind. Integration tests create a fresh database per run via the
+# helpers in `tests/common/mod.rs`; the server here just holds an empty
+# `postgres` database with known credentials.
+#
+# Usage:
+#   docker compose up -d postgres            # dev pool
+#   docker compose up -d postgres-test       # CI-parallel DB for `cargo test`
+#   docker compose up -d                     # both
+#
+# Connection strings:
+#   dev  : postgres://explorer:explorer@127.0.0.1:54320/explorer
+#   test : postgres://explorer:explorer@127.0.0.1:54329/postgres
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: allfeat-explorer-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: explorer
+      POSTGRES_PASSWORD: explorer
+      POSTGRES_DB: explorer
+    ports:
+      - "127.0.0.1:54320:5432"
+    # Postgres 18+ lays out data under a major-version subdir
+    # (/var/lib/postgresql/18/…) to be pg_upgrade-friendly; mount the
+    # parent directory, not `data/`, per the upstream guidance.
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U explorer -d explorer"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  postgres-test:
+    image: postgres:18-alpine
+    container_name: allfeat-explorer-pg-test
+    # Never restart — a crashed test DB should fail the run loudly, not
+    # silently come back with a different identity.
+    restart: "no"
+    environment:
+      POSTGRES_USER: explorer
+      POSTGRES_PASSWORD: explorer
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    ports:
+      - "127.0.0.1:54329:5432"
+    # tmpfs on the parent dir for the same Postgres-18 reason as the
+    # durable service above. 512 MiB is plenty for the migration suite
+    # (everything else is dropped at teardown).
+    tmpfs:
+      - /var/lib/postgresql:rw,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U explorer -d postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+volumes:
+  pgdata:

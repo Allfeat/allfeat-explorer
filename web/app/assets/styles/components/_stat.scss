@@ -1,0 +1,35 @@
+// Metric card used on hero panels.
+
+.stat {
+  padding: 28px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  &:last-child {
+    border-right: 0;
+  }
+
+  .label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-dimmer);
+  }
+
+  .value {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1;
+  }
+
+  .sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+  }
+}

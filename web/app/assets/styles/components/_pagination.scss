@@ -1,0 +1,75 @@
+// Pagination control — URL-driven via ?page=. Not part of the original
+// mockup; classes borrow visual language from .seg / .btn so the component
+// fits the rest of the design system.
+
+.pagination {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  flex-wrap: wrap;
+  justify-content: center;
+
+  button,
+  a {
+    min-width: 30px;
+    height: 30px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    color: var(--ink-dim);
+    font-family: inherit;
+    font-size: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+
+    &:hover:not(:disabled):not(.current) {
+      color: var(--ink);
+      background: var(--hover);
+      border-color: var(--line-2);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    &.current {
+      color: var(--bg);
+      background: var(--ink);
+      border-color: var(--ink);
+    }
+  }
+
+  .ellipsis {
+    min-width: 24px;
+    text-align: center;
+    color: var(--ink-dimmer);
+    user-select: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .pagination {
+    width: 100%;
+    justify-content: center;
+  }
+  .pagination button,
+  .pagination a {
+    min-width: 40px;
+    height: 40px;
+    padding: 0 10px;
+  }
+}
+
+[data-theme="light"] .pagination button.current,
+[data-theme="light"] .pagination a.current {
+  background: var(--ink-900);
+  color: var(--cream-50);
+  border-color: var(--ink-900);
+}

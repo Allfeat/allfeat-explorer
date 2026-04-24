@@ -1,0 +1,22 @@
+.direnv/
+dist/
+target/
+.envrc
+.claude/
+
+# Node / Bun
+node_modules/
+
+# Nuxt (web/)
+web/.nuxt/
+web/.output/
+web/.data/
+web/node_modules/
+web/dist/
+
+# Local orchestration
+mprocs.log
+
+# macOS metadata
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,79 @@
+// Horizontal tab strip — URL-driven via ?tab=.
+
+.tabs {
+  position: relative;
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  // Allow horizontal scroll when too many tabs fit the viewport (mobile).
+  overflow-x: auto;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tab {
+  padding: 14px 18px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-dimmer);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 0.22s ease;
+
+  &:hover {
+    color: var(--ink-dim);
+  }
+
+  &.active {
+    color: var(--ink);
+  }
+
+  .count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 100px;
+    background: var(--chip-bg);
+    color: var(--ink-dim);
+    transition: background 0.22s ease, color 0.22s ease;
+  }
+
+  &.active .count {
+    background: var(--ink);
+    color: var(--bg);
+  }
+}
+
+.tabs__indicator {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  height: 2px;
+  width: 0;
+  background: var(--ink);
+  border-radius: 2px 2px 0 0;
+  opacity: 0;
+  transform: translateX(0);
+  transition:
+    transform 0.38s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.38s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.2s ease;
+  pointer-events: none;
+
+  &.ready {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabs__indicator {
+    transition: opacity 0.15s linear;
+  }
+}

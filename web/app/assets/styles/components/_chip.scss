@@ -1,0 +1,44 @@
+// Small mono-labelled tags — used for module / call names on extrinsics.
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--chip-bd);
+  background: var(--chip-bg);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+
+  &:hover {
+    color: var(--ink);
+    border-color: var(--line-2);
+  }
+
+  &.module {
+    color: var(--teal-500);
+    border-color: rgba(0, 177, 140, 0.25);
+    background: rgba(0, 177, 140, 0.06);
+  }
+
+  &.call {
+    color: var(--cream-100);
+  }
+}
+
+[data-theme="light"] .chip.module {
+  color: var(--teal-700);
+  border-color: rgba(5, 138, 110, 0.30);
+  background: rgba(5, 138, 110, 0.06);
+}
+
+[data-theme="light"] .chip.call {
+  color: var(--ink-900);
+}

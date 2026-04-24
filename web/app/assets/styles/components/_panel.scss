@@ -1,0 +1,82 @@
+// Panels — base surface used by every data section.
+
+.panel {
+  border: 1px solid var(--line);
+  background: var(--bg-elev);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  transition:
+    box-shadow 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  &.interactive {
+    cursor: pointer;
+
+    &:hover {
+      box-shadow: var(--shadow-lift);
+      border-color: var(--line-2);
+      transform: translateY(-1px);
+    }
+  }
+
+  &.hero-card {
+    background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg-1-solid) 100%);
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: radial-gradient(circle at 85% 0%, rgba(0, 177, 140, 0.10), transparent 50%);
+      pointer-events: none;
+    }
+  }
+}
+
+[data-theme="light"] .panel.hero-card::before {
+  background: radial-gradient(circle at 85% 0%, rgba(5, 138, 110, 0.08), transparent 50%);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+
+  h3 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-dimmer);
+    white-space: nowrap;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .panel-head {
+    padding: 14px 16px;
+    gap: 8px;
+  }
+  // When the panel body contains a full table that reflows to cards, the
+  // table cards need their own padding instead of panel-wide side walls.
+  // Keep the panel itself as the outer card, and add a little inner pad.
+  .panel > .table:not(.compact) {
+    padding: 10px 12px 14px;
+  }
+}

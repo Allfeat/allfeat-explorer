@@ -1,0 +1,90 @@
+// Buttons — default / primary / ghost / small + icon-square.
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  background: transparent;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.18s ease;
+
+  &:hover {
+    background: var(--hover);
+    border-color: var(--ink-dim);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.25);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+
+  &.primary {
+    background: var(--ink);
+    color: var(--bg);
+    border-color: var(--ink);
+
+    &:hover {
+      background: var(--cream-100);
+      color: var(--ink-900);
+    }
+  }
+
+  &.ghost {
+    border-color: transparent;
+  }
+
+  &.sm {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+}
+
+[data-theme="light"] .btn:hover {
+  box-shadow: 0 4px 12px -4px rgba(21, 21, 21, 0.1);
+}
+
+[data-theme="light"] .btn.primary {
+  background: var(--ink-900);
+  color: var(--cream-50);
+  border-color: var(--ink-900);
+
+  &:hover {
+    background: #2a2a28;
+  }
+}
+
+.icon-square {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  color: var(--ink-dim);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--ink);
+    background: var(--hover);
+  }
+}
+
+// Touch-friendly tap targets on mobile — WCAG recommends 44x44, go 40x40
+// which reads cleanly next to the other 40px mobile icon buttons.
+@media (max-width: 640px) {
+  .icon-square {
+    width: 40px;
+    height: 40px;
+  }
+}

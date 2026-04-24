@@ -1,0 +1,359 @@
+// Header: brand + nav (with responsive More dropdown) + right-hand utilities.
+// Classes match the mockup one-for-one.
+//
+// Mobile (<900px): `.nav` is hidden and replaced by `.nav-burger` on the
+// left, which opens <MobileDrawer/>. NetworkSwitch + ThemeSwitch hide
+// from the header at <640px (they live in the drawer instead).
+
+.header {
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  backdrop-filter: blur(10px);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  height: 72px;
+}
+
+@media (max-width: 900px) {
+  .header-inner {
+    gap: 14px;
+    height: 64px;
+  }
+}
+
+// Hamburger — higher specificity than `.icon-btn` so the larger touch
+// target sticks (`.icon-btn` is 36x36 by default, too small to tap
+// confidently on mobile).
+.header .nav-burger {
+  display: none;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .header .nav-burger {
+    display: grid;
+  }
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.brand-mark {
+  height: 22px;
+  width: auto;
+  color: var(--ink);
+  display: block;
+}
+
+.brand-word {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+
+  .dot {
+    color: var(--red-500);
+  }
+}
+
+[data-theme="light"] .brand-word .dot {
+  color: var(--red-700);
+}
+
+.brand-suffix {
+  margin-left: 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dimmer);
+}
+
+.nav {
+  display: flex;
+  gap: 2px;
+  margin-left: 8px;
+}
+
+@media (max-width: 900px) {
+  .nav {
+    display: none;
+  }
+}
+
+.nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  border-radius: 6px;
+  position: relative;
+  transition: color 0.2s ease;
+
+  svg {
+    flex-shrink: 0;
+    opacity: 0.7;
+    transition: opacity 0.15s ease;
+  }
+
+  &:hover {
+    color: var(--ink);
+  }
+
+  &:hover svg {
+    opacity: 1;
+  }
+
+  &.active {
+    color: var(--ink);
+  }
+
+  &.active svg {
+    opacity: 1;
+    color: var(--teal-500);
+  }
+}
+
+.nav a::after {
+  content: '';
+  position: absolute;
+  left: 11px;
+  right: 11px;
+  bottom: -20px;
+  height: 1px;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.nav a:hover::after {
+  transform: scaleX(0.4);
+  background: var(--ink-dim);
+}
+
+.nav a.active::after {
+  transform: scaleX(1);
+  background: var(--ink);
+}
+
+// Responsive nav collapsing rules:
+//   - Always visible: Overview, ATS, Token, Blocks
+//   - xxl: Extrinsics, Events, Runtime are ALWAYS in the More dropdown
+//   - xl (<=1280px): also move Accounts
+.nav a[data-collapse-at="xxl"] {
+  display: none;
+}
+
+@media (max-width: 1280px) {
+  .nav a[data-collapse-at="xl"] {
+    display: none;
+  }
+}
+
+
+.nav-more-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 50;
+  animation: navMoreIn 0.14s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  a {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 5px;
+    font-family: var(--font-display);
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--ink-dim);
+    position: relative;
+  }
+
+  a svg {
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+
+  a:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+
+  a:hover svg {
+    opacity: 1;
+  }
+
+  a.active {
+    color: var(--ink);
+  }
+
+  a.active svg {
+    opacity: 1;
+    color: var(--teal-500);
+  }
+
+  a::after {
+    display: none;
+  }
+}
+
+@keyframes navMoreIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// Mirror of the collapse rules for items appearing inside the More dropdown.
+.nav-more-menu a[data-show-at="xl"] {
+  display: none;
+}
+
+@media (max-width: 1280px) {
+  .nav-more-menu a[data-show-at="xl"] {
+    display: inline-flex;
+  }
+}
+
+.network-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 100px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+
+  &:hover {
+    background: var(--hover);
+  }
+}
+
+// In-header utilities: hide NetworkSwitch + ThemeSwitch at <640px — they
+// move into the drawer. Brand suffix ("Explorer") drops at <480px so the
+// hamburger + logo + search bar can share the row cleanly.
+@media (max-width: 640px) {
+  .header .header-network,
+  .header .theme-switch {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .brand-suffix {
+    display: none;
+  }
+}
+
+.network-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--teal-500);
+  box-shadow: 0 0 0 3px rgba(0, 177, 140, 0.2);
+
+  &.testnet {
+    background: var(--red-500);
+    box-shadow: 0 0 0 3px rgba(255, 74, 95, 0.2);
+  }
+}
+
+.network-name {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.network-type {
+  color: var(--ink-dimmer);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-dim);
+
+  &:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+}
+
+.price-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+
+  .sym {
+    color: var(--ink-dimmer);
+    letter-spacing: 0.1em;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .val {
+    color: var(--ink);
+  }
+
+  .chg.up {
+    color: var(--teal-500);
+  }
+
+  .chg.down {
+    color: var(--red-500);
+  }
+}
+
+[data-theme="light"] .price-chip .chg.up {
+  color: var(--teal-700);
+}
+
+[data-theme="light"] .price-chip .chg.down {
+  color: var(--red-700);
+}

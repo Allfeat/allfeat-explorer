@@ -1,0 +1,67 @@
+# syntax=docker/dockerfile:1.7
+#
+# Multi-stage build for the `allfeat-explorer` Rust binary.
+#
+# The same image serves every deployment mode — `--mode=indexer`,
+# `--mode=server`, `--mode=all`, and the `--reconcile` one-shot. The mode
+# flag is passed as an arg in the Deployment spec; the container itself
+# ships a single ENTRYPOINT so the manifest is the only place that has to
+# know which role the pod plays.
+
+ARG RUST_VERSION=1.95
+ARG DEBIAN_CODENAME=bookworm
+
+# ---------------------------------------------------------------------------
+# Stage 1 — build
+# ---------------------------------------------------------------------------
+# `rust:<ver>-slim-<codename>` is debian-slim with the toolchain but
+# without docs/man pages, roughly half the size of the full image.
+# glibc-based, so the distroless `cc-debian12` runtime stage below is
+# ABI-compatible out of the box.
+FROM rust:${RUST_VERSION}-slim-${DEBIAN_CODENAME} AS build
+
+# subxt ↔ webpki-roots ↔ native TLS needs pkg-config + libssl headers at
+# compile time; the slim base doesn't ship them. `gcc`/`make` are pulled
+# in transitively by `libssl-dev`.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        pkg-config libssl-dev ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the full workspace in one shot. A warm BuildKit cache on `target/`
+# and `~/.cargo/registry` gives us incremental compiles on repeat CI runs;
+# the extra complexity of a "dependencies-first" pre-build layer (copy
+# Cargo.toml, stub main.rs, build, then overwrite) isn't worth it once the
+# registry cache is hot.
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY migrations ./migrations
+COPY artifacts ./artifacts
+
+# Build the production binary: `ssr` without `mock`. `--locked` refuses to
+# touch Cargo.lock so reproducible builds stay reproducible.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked --no-default-features --features ssr --bin allfeat-explorer \
+ && cp /app/target/release/allfeat-explorer /usr/local/bin/allfeat-explorer
+
+# ---------------------------------------------------------------------------
+# Stage 2 — runtime
+# ---------------------------------------------------------------------------
+# `cc-debian12:nonroot` carries libc, libssl, and the CA bundle — enough to
+# dial `wss://` RPC endpoints and `postgres://…?sslmode=require`. Runs as
+# UID 65532 out of the box.
+FROM gcr.io/distroless/cc-debian12:nonroot
+
+COPY --from=build /usr/local/bin/allfeat-explorer /usr/local/bin/allfeat-explorer
+
+# HTTP port — only bound in --mode=server and --mode=all. Harmless in
+# --mode=indexer (no listener, nothing to expose).
+EXPOSE 8088
+
+# No CMD on purpose. The Kubernetes Deployment sets `args: ["--mode=..."]`
+# (or `--reconcile` for the maintenance Job), and the ENTRYPOINT is the
+# only fixed piece.
+ENTRYPOINT ["/usr/local/bin/allfeat-explorer"]

@@ -1,0 +1,73 @@
+// Loading placeholders for table rows and inline text.
+// The design doesn't include a native skeleton — these classes are sized to
+// match real table rows so hydration/fetch swaps don't shift layout.
+// Also defines .row-fade-in which flashes a freshly pushed WS row so the
+// user can track newly arrived data.
+
+.skeleton-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  align-items: center;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  > span {
+    display: block;
+    height: 12px;
+    border-radius: 4px;
+    background: var(--chip-bg);
+    position: relative;
+    overflow: hidden;
+
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255, 251, 235, 0.07), transparent);
+      background-size: 200% 100%;
+      animation: skeleton-shimmer 1.4s linear infinite;
+    }
+  }
+}
+
+[data-theme="light"] .skeleton-row > span::after {
+  background: linear-gradient(90deg, transparent, rgba(21, 21, 21, 0.06), transparent);
+  background-size: 200% 100%;
+}
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+// Row flash when a new live item is appended.
+.row-fade-in {
+  animation:
+    row-fade-in-opacity 0.3s ease-out both,
+    row-highlight-fade 2s ease-out both;
+}
+
+@keyframes row-fade-in-opacity {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes row-highlight-fade {
+  0%   { background: rgba(0, 177, 140, 0.14); }
+  100% { background: transparent; }
+}
+
+[data-theme="light"] .row-fade-in {
+  animation:
+    row-fade-in-opacity 0.3s ease-out both,
+    row-highlight-fade-light 2s ease-out both;
+}
+
+@keyframes row-highlight-fade-light {
+  0%   { background: rgba(5, 138, 110, 0.10); }
+  100% { background: transparent; }
+}

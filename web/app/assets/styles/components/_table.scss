@@ -1,0 +1,150 @@
+// Data tables. Row hover paints a left accent via inset box-shadow on the
+// first cell so the overall table-layout isn't perturbed.
+//
+// Mobile card reflow (<640px):
+//   Full tables (`.table` without `.compact`) collapse into stacked cards
+//   — each <tr> becomes a card, each <td> becomes a label/value row
+//   inside it. Labels come from `data-label` attributes on cells. Dashboard
+//   panels use `.table.compact` and keep the normal row layout because
+//   they already render as mini cards at the cell level.
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+
+  th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dimmer);
+    font-weight: 500;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+
+    &.right  { text-align: right; }
+    &.center { text-align: center; }
+  }
+
+  td {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+    vertical-align: middle;
+  }
+
+  tbody tr {
+    transition: background 0.22s ease;
+
+    &:hover {
+      background: var(--hover);
+    }
+
+    &:hover td:first-child {
+      box-shadow: inset 2px 0 0 var(--accent-pos);
+    }
+
+    &:last-child td {
+      border-bottom: 0;
+    }
+  }
+
+  &.compact td {
+    padding: 10px 18px;
+    font-size: 12.5px;
+  }
+
+  &.compact th {
+    padding: 8px 18px;
+  }
+}
+
+// ——— mobile card reflow ———
+@media (max-width: 640px) {
+  .table:not(.compact) {
+    display: block;
+
+    thead { display: none; }
+
+    tbody {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    tr {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg-elev);
+
+      &:hover {
+        background: var(--bg-elev);
+        border-color: var(--line-2);
+      }
+
+      &:hover td:first-child {
+        box-shadow: none;
+      }
+    }
+
+    td {
+      // Flex so multi-element values (e.g. module + call chips) stay on
+      // the same row as the label. `display: grid` stretches inline-flex
+      // children (pills, status badges) to fill the 1fr column, and
+      // flows extra children onto new rows — both break the card layout.
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 4px 10px;
+      padding: 0;
+      border: none;
+      font-size: 12.5px;
+      min-width: 0;
+
+      &::before {
+        content: attr(data-label);
+        flex: 0 0 auto;
+        min-width: 64px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--ink-dimmer);
+        line-height: 1.5;
+      }
+
+      // Cells without a label span full width (used for header-ish rows
+      // like the first cell showing the primary identifier at full size).
+      &:not([data-label]),
+      &[data-label=""] {
+        &::before { display: none; }
+      }
+
+      // `right`-aligned cells lose their right alignment inside cards —
+      // the grid label/value pairing already handles the visual hierarchy.
+      &.right {
+        text-align: left;
+      }
+    }
+  }
+
+  // Compact dashboard tables: shrink fixed columns so the middle flex
+  // gets enough room on narrow phones without the layout breaking.
+  .table.compact {
+    .col-id { width: 96px; }
+    .col-meta { width: 120px; }
+
+    // Row-mid chip rows already flex-wrap; tighten the gap so chips stack
+    // reliably under the author line when the cell is tight.
+    .row-mid {
+      flex-wrap: wrap;
+      gap: 4px 8px;
+    }
+  }
+}

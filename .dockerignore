@@ -1,0 +1,16 @@
+target/
+**/node_modules/
+web/.nuxt/
+web/.output/
+web/.data/
+.direnv/
+.git/
+.github/
+end2end/
+docs/
+deploy/
+tests/
+mprocs.log
+mprocs*.yaml
+README.md
+*.md

@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1.7
+#
+# Multi-stage build for the Nuxt 4 SSR frontend (`web/`).
+#
+# Bun is used as the package manager because that's what the project's
+# lockfile (`web/bun.lock`) was generated with; the produced Nitro bundle
+# in `.output/` is a standard Node program, so the runtime stage drops
+# Bun entirely and runs `node .output/server/index.mjs`.
+
+ARG BUN_VERSION=1.2
+ARG NODE_VERSION=22
+
+# ---------------------------------------------------------------------------
+# Stage 1 — install deps + build Nuxt
+# ---------------------------------------------------------------------------
+# Alpine base on both stages keeps the toolchain consistent on musl —
+# sass-embedded's native binary and any other build-time native deps are
+# fetched against the same libc family that the runtime image uses.
+FROM oven/bun:${BUN_VERSION}-alpine AS build
+
+WORKDIR /app
+
+# Install deps first on just the manifest so BuildKit caches this layer
+# as long as the lockfile doesn't change. `--ignore-scripts` skips the
+# `postinstall: nuxt prepare` hook — running it here would generate a
+# stale `.nuxt/tsconfig.json` because nuxt.config.ts and the app sources
+# aren't available yet.
+COPY web/package.json web/bun.lock web/bunfig.toml ./web/
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    cd web && bun install --frozen-lockfile --ignore-scripts
+
+# `@bindings` (see web/nuxt.config.ts) resolves to `../bindings/index.ts`
+# — copy that folder alongside `web/` so the alias works at build time.
+COPY bindings ./bindings
+COPY web ./web
+
+# Generate `.nuxt/` types (aliases + module augmentations) now that every
+# source file is in place. Running this explicitly decouples cache
+# invalidation from the install layer above.
+RUN cd web && bun x nuxt prepare
+
+# `nuxt build` emits the universal Nitro server under `web/.output/`.
+# Setting NODE_ENV=production turns on Vue's prod optimisations and tree
+# shaking of dev-only modules.
+ENV NODE_ENV=production
+RUN cd web && bun run build
+
+# ---------------------------------------------------------------------------
+# Stage 2 — runtime (tiny Node image, no package manager)
+# ---------------------------------------------------------------------------
+# `node:<ver>-alpine` is ~50 MB vs ~180 MB for the bookworm-slim image.
+# Nuxt's Nitro output is plain JS at this point — no native compilation
+# happens at runtime — so musl is safe.
+FROM node:${NODE_VERSION}-alpine AS runtime
+
+# Run as a non-root unprivileged user. `node` already exists in the base
+# image at UID 1000.
+USER node
+WORKDIR /app
+
+# Only the Nitro output is needed — Nuxt bundles every runtime dep inside
+# .output/, so we don't ship node_modules or the source tree.
+COPY --from=build --chown=node:node /app/web/.output ./.output
+
+ENV NODE_ENV=production
+ENV NITRO_HOST=0.0.0.0
+ENV NITRO_PORT=3000
+
+# Runtime configuration (override in the Deployment):
+#   NUXT_API_ORIGIN            → backend base URL for SSR $fetch
+#                                (e.g. http://explorer-api.explorer.svc.cluster.local:8088)
+#   NUXT_PUBLIC_API_BASE       → path clients hit through the gateway (e.g. /api/v1)
+#   NUXT_PUBLIC_WS_BASE        → wss://explorer.allfeat.org/api/v1
+
+EXPOSE 3000
+
+ENTRYPOINT ["node", ".output/server/index.mjs"]

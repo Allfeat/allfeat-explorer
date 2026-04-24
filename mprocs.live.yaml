@@ -1,0 +1,37 @@
+# Local dev orchestration pointing at a **live Melodie RPC node** (not mock).
+#
+# Usage:
+#   mprocs -c mprocs.live.yaml    # starts Postgres + live API + Nuxt frontend
+#   q / Ctrl-a q                  # quit (sends SIGTERM to every proc)
+#   r                             # restart the focused proc
+#
+# Prerequisites:
+#   - A Melodie node reachable at ws://127.0.0.1:9944 (override per-pane
+#     below, or export `RPC_ENDPOINT_MELODIE` before launching mprocs).
+#   - Postgres on port 54320 — this file spins it up via docker compose, same
+#     as `mprocs.yaml`. The indexer writes here; the API reads from it. A
+#     missing DB would still boot (RPC fallback) but you'd lose the indexed
+#     paths, so we keep Postgres in-loop.
+#
+# The API runs without the `mock` feature, so it actually hits the node and
+# the database. For the mocked / node-less loop, use the default
+# `mprocs` (which reads `mprocs.yaml`).
+#
+# The `api` pane invokes `cargo` directly via bash rather than going through a
+# `bun run` script: Bun's built-in shell has been flaky with POSIX parameter
+# expansion (`${VAR:-default}`), which was silently producing an invalid
+# DATABASE_URL and a 30 s pool-acquire timeout at boot.
+
+procs:
+  db:
+    shell: docker compose up postgres
+
+  api:
+    shell: cargo run --features ssr --bin allfeat-explorer
+    env:
+      EXPLORER_DISABLE_RATE_LIMIT: "1"
+      RPC_ENDPOINT_MELODIE: "ws://127.0.0.1:9944"
+      DATABASE_URL: "postgres://explorer:explorer@127.0.0.1:54320/explorer"
+
+  web:
+    shell: bun run dev:web

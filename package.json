@@ -1,0 +1,14 @@
+{
+  "name": "allfeat-explorer-root",
+  "private": true,
+  "description": "Orchestration scripts for Allfeat Explorer (Rust backend + Nuxt 4 frontend).",
+  "scripts": {
+    "dev:api": "EXPLORER_DISABLE_RATE_LIMIT=1 cargo run --features ssr,mock --bin allfeat-explorer",
+    "dev:web": "cd web && bun run dev",
+    "build:api": "cargo build --release --features ssr --bin allfeat-explorer",
+    "build:web": "cd web && bun run build",
+    "typecheck": "cd web && bun run typecheck",
+    "gen:bindings": "cargo test --features ts-bindings,ssr,mock --lib --quiet export_bindings_",
+    "test:e2e": "cd end2end && bun x playwright test"
+  }
+}

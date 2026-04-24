@@ -1,0 +1,137 @@
+[package]
+name = "allfeat-explorer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8.0", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "signal"], optional = true }
+
+# Both sides: domain types carry `#[derive(Serialize, Deserialize)]` so the
+# REST handlers and the WebSocket protocol can shuttle them across the wire
+# to the Nuxt client. `serde_json` also lives on both sides because the
+# live-stream protocol frames (client ⇄ WebSocket server) use the same
+# Serde types on both ends.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Shared on both sides: `futures::Stream` backs the `ChainData::subscribe_*`
+# return type.
+futures = "0.3"
+
+# TypeScript binding generator. Gated behind `ts-bindings` so the prod
+# bundle never links it; the `bun run gen:bindings` script flips the
+# feature on and runs the emitted `#[test]` functions (one per type)
+# that ts-rs' derive macro generates to write `.ts` files into the
+# `bindings/` directory committed alongside this crate.
+ts-rs = { version = "10", optional = true }
+
+# Server-only: subxt RPC client + caching layers (hot TTL + finalized LRU).
+async-trait = { version = "0.1", optional = true }
+moka = { version = "0.12", features = ["future"], optional = true }
+subxt = { version = "0.50", optional = true }
+# SS58 encoder primitives — base58 alphabet + blake2b-512 for the 2-byte
+# checksum. Both already live in the transitive dep graph via subxt, promoted
+# to direct deps so we can encode addresses with an arbitrary `ss58Format`
+# prefix (subxt's `AccountId32::Display` is hardcoded to 42). Same ssr/mock
+# gating as subxt because the encoder is only invoked server-side.
+base58 = { version = "0.2", optional = true }
+blake2 = { version = "0.10", default-features = false, optional = true }
+# Hex encode / decode for chain hashes. The mapper and indexer-buffer paths
+# used to hand-roll `hex_nibble` + `decode_hex32` loops; promoting the already
+# well-audited `hex` crate to a direct dep consolidates both into one call.
+hex = { version = "0.4", optional = true }
+thiserror = { version = "1", optional = true }
+tracing = { version = "0.1", optional = true }
+# Subscriber + env-based filter for server logs. Installed at
+# `main()` start; every `tracing::debug!` in the RPC path goes through
+# it so operators can tune verbosity via `RUST_LOG`.
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+# HTTP request tracing layer for axum. Logs each REST / WS request at
+# INFO with latency, so a stuck handler is visible without attaching a
+# debugger. `set-header` is used to stamp security headers
+# (X-Content-Type-Options, Referrer-Policy, ...) on every response.
+tower-http = { version = "0.6", features = ["trace", "set-header", "cors"], optional = true }
+# Per-IP rate limiter for the `/ws` route (and other public surfaces we
+# want to cap). `SmartIpKeyExtractor` reads `X-Forwarded-For` / `X-Real-IP`
+# so clients are keyed by real IP behind a reverse proxy rather than the
+# proxy's own loopback address.
+tower_governor = { version = "0.8", default-features = false, features = ["axum"], optional = true }
+# Prometheus HTTP metrics exporter for axum. Pairs a tower `Layer` that
+# tracks every request with a `metric_handle` whose `.render()` feeds the
+# `/metrics` endpoint. Relies on the `metrics` facade, so custom counters
+# (cache hits, WS sessions, ...) can be layered on top without extra
+# plumbing.
+axum-prometheus = { version = "0.10", optional = true }
+# `metrics` is the facade the indexer workers write to
+# (`indexer_blocks_indexed_total`, `buffer_size`, …). `axum-prometheus`
+# installs a compatible recorder via `metrics-exporter-prometheus` at
+# boot, so counters and gauges emitted through this crate show up in
+# the same `/metrics` scrape as the HTTP request-layer series.
+metrics = { version = "0.24", optional = true }
+# Wraps a `tokio::sync::broadcast::Receiver` into a `futures::Stream` — the
+# fan-out shape of every live subscription (N WS clients → one per-network
+# producer task).
+tokio-stream = { version = "0.1", features = ["sync"], optional = true }
+
+# Postgres driver for the indexer. `migrate` bakes the `migrations/` folder
+# into the binary so a fresh deploy self-provisions its schema;
+# `runtime-tokio` pairs with the tokio runtime already in use;
+# `postgres` is the only backend we target. TLS is off — the indexer talks
+# to Postgres over a private network / loopback, TLS termination belongs
+# on the connection string when needed (see docs/deployment.md).
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "postgres",
+    "macros",
+    "migrate",
+    "chrono",
+], optional = true }
+
+# Test-only dev dependencies. Gate `#[tokio::test]` on `full`, and surface
+# `hex`/`serde_json` so integration mappers can craft SCALE/hex fixtures
+# without pulling those into the prod bundle.
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+hex = "0.4"
+serde_json = "1"
+# Query-string decoder reused by the filter unit tests to exercise the
+# exact `?foo=bar&baz=qux` shape axum hands to the handlers at runtime.
+serde_urlencoded = "0.7"
+# Integration tests submit real extrinsics (Alice → Bob transfers) so the
+# Phase 4 mapper has something deterministic to match on a fresh dev chain.
+# `sr25519` enables the dev keyring; kept dev-only so the runtime bundle
+# doesn't link it.
+subxt-signer = { version = "0.50", features = ["sr25519", "subxt"] }
+
+[features]
+ssr = [
+    "dep:axum",
+    "axum/ws",
+    "dep:tokio",
+    "dep:async-trait",
+    "dep:thiserror",
+    "dep:moka",
+    "dep:subxt",
+    "dep:base58",
+    "dep:blake2",
+    "dep:hex",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:tower-http",
+    "dep:tower_governor",
+    "dep:axum-prometheus",
+    "dep:metrics",
+    "dep:tokio-stream",
+    "dep:sqlx",
+]
+# Opt-in at compile time: swap the subxt-backed provider for the deterministic
+# mock generator. Used for design iteration, local dev without a node, and the
+# e2e/Playwright suite. When off, the explorer only links the RPC path.
+mock = []
+
+# Pull in `ts-rs` and turn on its `#[ts(...)]` attributes across the
+# domain / API types. Activated exclusively by `bun run gen:bindings`
+# (see package.json) — prod builds leave it off so the crate and the
+# shipped binary don't carry a TypeScript codegen dep.
+ts-bindings = ["dep:ts-rs"]

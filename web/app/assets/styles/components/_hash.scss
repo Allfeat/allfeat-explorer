@@ -1,0 +1,38 @@
+// Mono hash / address + inline copy button.
+
+.hash {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--link);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--red-500);
+  }
+}
+
+[data-theme="light"] .hash:hover {
+  color: var(--red-700);
+}
+
+.hash-dim {
+  color: var(--ink-dim);
+}
+
+.copy-btn,
+.fmt-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--ink-dimmer);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s;
+
+  &:hover {
+    color: var(--ink);
+    background: var(--hover);
+  }
+}

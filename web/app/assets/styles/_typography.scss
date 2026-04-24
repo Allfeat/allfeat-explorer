@@ -1,0 +1,41 @@
+// Typography — ported from the mockup.
+// TASA Orbiter is a licensed font; the mockup falls back to Space Grotesk
+// (already loaded via Google Fonts in nuxt.config.ts head.link).
+
+@font-face {
+  font-family: 'TASA Orbiter Display';
+  src: local('Space Grotesk');
+  font-weight: 400 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TASA Orbiter Text';
+  src: local('Space Grotesk');
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "zero";
+}
+
+.ui-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dimmer);
+  font-weight: 500;
+}

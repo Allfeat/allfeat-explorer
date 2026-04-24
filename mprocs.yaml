@@ -1,0 +1,22 @@
+# Local dev orchestration: Postgres (docker) + Rust API (mock mode) + Nuxt frontend.
+#
+# Usage:
+#   mprocs                           # starts all three panes (mocked API)
+#   mprocs -c mprocs.live.yaml       # same stack, API hits a live Melodie RPC
+#   q / Ctrl-a q                     # quit (sends SIGTERM to every proc)
+#   r                                # restart the focused proc
+#
+# The API runs with `--features ssr,mock` so it never hits the node or the
+# database. Postgres is still spun up because the rest of the stack (tests,
+# sqlx migrations, non-mock runs) expects it on port 54320, and having it
+# attached here means one command covers the whole local loop.
+
+procs:
+  db:
+    shell: docker compose up postgres
+
+  api:
+    shell: bun run dev:api
+
+  web:
+    shell: bun run dev:web

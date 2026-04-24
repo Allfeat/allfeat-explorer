@@ -1,0 +1,31 @@
+# Local dev orchestration pointing at the **public Allfeat mainnet archive
+# RPC**. Only the `allfeat` network is enabled — Melodie is left off, so it
+# stays hidden from the UI and the indexer skips it.
+#
+# Usage:
+#   mprocs -c mprocs.prod.yaml    # starts Postgres + prod-RPC API + Nuxt frontend
+#   q / Ctrl-a q                  # quit (sends SIGTERM to every proc)
+#   r                             # restart the focused proc
+#
+# Prerequisites:
+#   - Outbound access to `wss://archive.rpc.allfeat.org`.
+#   - Postgres on port 54320 — this file spins it up via docker compose, same
+#     as `mprocs.yaml`. The indexer writes here; the API reads from it.
+#
+# Heads-up: the indexer will start backfilling from genesis on first boot and
+# hit the public archive RPC hard. Expect it to take a while and be nice —
+# consider pointing at a private node for serious indexing work.
+
+procs:
+  db:
+    shell: docker compose up postgres
+
+  api:
+    shell: cargo run --features ssr --bin allfeat-explorer
+    env:
+      EXPLORER_DISABLE_RATE_LIMIT: "1"
+      RPC_ENDPOINT_ALLFEAT: "ws://127.0.0.1:9944"
+      DATABASE_URL: "postgres://explorer:explorer@127.0.0.1:54320/explorer"
+
+  web:
+    shell: bun run dev:web

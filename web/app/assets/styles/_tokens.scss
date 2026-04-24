@@ -1,0 +1,119 @@
+// Design tokens — ported verbatim from the mockup's inline <style>.
+// Loaded once from main.scss. Do NOT inject via Vite additionalData:
+// :root declarations would then leak into every scoped .vue style block.
+
+:root {
+  // Brand palette (charter)
+  --cream-50:  #FFFBEB;
+  --cream-100: #EDE8D5;
+  --cream-200: #C4C0B1;
+  --cream-300: #A19F95;
+  --ink-900:   #151515;
+  --ink-800:   #1C1C1B;
+  --ink-700:   #2C2C2A;
+  --ink-600:   #3A3A37;
+  --ink-500:   #504F4B;
+  --ink-400:   #676660;
+  --ink-300:   #8A8880;
+  --red-500:   #FF4A5F;
+  --red-600:   #E84558;
+  --red-700:   #C43D4D;
+  --red-800:   #A13541;
+  --teal-500:  #00B18C;
+  --teal-600:  #02A180;
+  --teal-700:  #058A6E;
+  --teal-800:  #08735C;
+
+  // Typography
+  --font-display: 'TASA Orbiter Display', 'TASA Orbiter', 'Space Grotesk', system-ui, sans-serif;
+  --font-text:    'TASA Orbiter Text', 'TASA Orbiter', 'Space Grotesk', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+// Theme: dark (default, also matches prefers-color-scheme: dark via :root)
+:root,
+[data-theme="dark"] {
+  --bg:            #0B0B0A;
+  --bg-1:          #151513;
+  --bg-1-solid:    #151513;
+  --bg-2:          #1F1F1C;
+  --bg-elev:       #18181669;
+  --bg-elev-solid: #181816;
+  --line:          rgba(255, 251, 235, 0.09);
+  --line-2:        rgba(255, 251, 235, 0.16);
+  --ink:           var(--cream-50);
+  --ink-dim:       var(--cream-200);
+  --ink-dimmer:    var(--cream-300);
+  --ink-muted:     var(--ink-400);
+  --accent-pos:    var(--teal-500);
+  --accent-neg:    var(--red-500);
+  --chip-bg:       rgba(255, 251, 235, 0.05);
+  --chip-bd:       rgba(255, 251, 235, 0.09);
+  --hover:         rgba(255, 251, 235, 0.04);
+  --link:          #EDE8D5;
+  --link-hover:    #FFFBEB;
+  --grid-dot:      rgba(255, 251, 235, 0.045);
+  --shadow:        0 1px 0 rgba(255, 251, 235, 0.05) inset, 0 2px 4px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --shadow-lift:   0 1px 0 rgba(255, 251, 235, 0.08) inset, 0 12px 40px -8px rgba(0, 0, 0, 0.75), 0 4px 12px rgba(0, 0, 0, 0.4);
+  --glow-teal:     0 0 0 1px rgba(0, 177, 140, 0.22), 0 0 32px -8px rgba(0, 177, 140, 0.35);
+  --glow-red:      0 0 0 1px rgba(255, 74, 95, 0.22), 0 0 32px -8px rgba(255, 74, 95, 0.35);
+}
+
+// System-preference light theme: applies when the user's OS prefers light
+// AND no explicit [data-theme] override is set on the document.
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:            #FBF6E3;
+    --bg-1:          #FFFBEB;
+    --bg-1-solid:    #FFFBEB;
+    --bg-2:          #F3ECD0;
+    --bg-elev:       #FFFBEB;
+    --bg-elev-solid: #FFFBEB;
+    --line:          rgba(21, 21, 21, 0.08);
+    --line-2:        rgba(21, 21, 21, 0.14);
+    --ink:           var(--ink-900);
+    --ink-dim:       var(--ink-500);
+    --ink-dimmer:    var(--ink-400);
+    --ink-muted:     var(--ink-300);
+    --accent-pos:    var(--teal-700);
+    --accent-neg:    var(--red-700);
+    --chip-bg:       rgba(21, 21, 21, 0.04);
+    --chip-bd:       rgba(21, 21, 21, 0.08);
+    --hover:         rgba(21, 21, 21, 0.035);
+    --link:          var(--ink-900);
+    --link-hover:    var(--red-700);
+    --grid-dot:      rgba(21, 21, 21, 0.05);
+    --shadow:        0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 1px 2px rgba(21, 21, 21, 0.04);
+    --shadow-lift:   0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 10px 32px -10px rgba(21, 21, 21, 0.14), 0 2px 6px rgba(21, 21, 21, 0.06);
+    --glow-teal:     0 0 0 1px rgba(5, 138, 110, 0.22), 0 0 32px -8px rgba(5, 138, 110, 0.28);
+    --glow-red:      0 0 0 1px rgba(196, 61, 77, 0.22), 0 0 32px -8px rgba(196, 61, 77, 0.28);
+  }
+}
+
+// Explicit override (future data-theme toggle support — currently unused per plan).
+[data-theme="light"] {
+  --bg:            #FBF6E3;
+  --bg-1:          #FFFBEB;
+  --bg-1-solid:    #FFFBEB;
+  --bg-2:          #F3ECD0;
+  --bg-elev:       #FFFBEB;
+  --bg-elev-solid: #FFFBEB;
+  --line:          rgba(21, 21, 21, 0.08);
+  --line-2:        rgba(21, 21, 21, 0.14);
+  --ink:           var(--ink-900);
+  --ink-dim:       var(--ink-500);
+  --ink-dimmer:    var(--ink-400);
+  --ink-muted:     var(--ink-300);
+  --accent-pos:    var(--teal-700);
+  --accent-neg:    var(--red-700);
+  --chip-bg:       rgba(21, 21, 21, 0.04);
+  --chip-bd:       rgba(21, 21, 21, 0.08);
+  --hover:         rgba(21, 21, 21, 0.035);
+  --link:          var(--ink-900);
+  --link-hover:    var(--red-700);
+  --grid-dot:      rgba(21, 21, 21, 0.05);
+  --shadow:        0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 1px 2px rgba(21, 21, 21, 0.04);
+  --shadow-lift:   0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 10px 32px -10px rgba(21, 21, 21, 0.14), 0 2px 6px rgba(21, 21, 21, 0.06);
+  --glow-teal:     0 0 0 1px rgba(5, 138, 110, 0.22), 0 0 32px -8px rgba(5, 138, 110, 0.28);
+  --glow-red:      0 0 0 1px rgba(196, 61, 77, 0.22), 0 0 32px -8px rgba(196, 61, 77, 0.28);
+}

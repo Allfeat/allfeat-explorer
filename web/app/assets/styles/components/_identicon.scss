@@ -1,0 +1,25 @@
+// Identicon swatch — conic-gradient computed per SS58 address (see
+// utils/identicon.ts). The fallback gradient keeps the look coherent when
+// rendered statically in the mockup.
+
+.identicon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background: conic-gradient(
+    from 0deg,
+    var(--teal-500),
+    var(--red-500),
+    var(--cream-200),
+    var(--teal-700),
+    var(--teal-500)
+  );
+  border: 1px solid var(--line-2);
+}
+
+.identicon-lg {
+  width: 56px;
+  height: 56px;
+}
