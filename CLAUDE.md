@@ -134,3 +134,9 @@ Default subxt config for this project is `SubstrateConfig`, not `PolkadotConfig`
 - `flake.nix` provides the dev shell (cargo, subxt CLI, bun, playwright, sqlx-cli, mprocs). Use `nix develop` or `direnv exec .`.
 - Migrations live in `migrations/` and are baked into the binary via `sqlx::migrate!`; `MIGRATOR.run(&pool)` fires at boot when `DATABASE_URL` is set, so operators don't run `sqlx migrate` out-of-band.
 - Two container images published to GHCR (`.github/workflows/images.yml`): `allfeat-explorer-backend` (one image, two roles via `--mode`) and `allfeat-explorer-web`. Kubernetes manifests live in the separate `infra-web3` repo; see `docs/deployment.md`.
+- Versioning is automated via `release-please` (`.github/workflows/release-please.yml`, `release-please-config.json`). Each package versions independently with namespaced tags (`backend-v*`, `web-v*`); merging a release PR triggers `images.yml`, which builds the matching image and bumps the corresponding `newTag` in `Allfeat/infra-web3` for ArgoCD to pick up.
+
+## Conventions
+
+- **Git commits must never include `Co-Authored-By: Claude` or any Claude attribution.** Commit under the user's configured git identity only — this overrides Claude Code's default commit template (see `feedback_no_claude_attribution.md`).
+- Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `style:`, `test:`, `ci:`, `chore:`); `feat`/`fix`/`perf` drive automated version bumps via release-please. Scope by package when relevant (`feat(api):`, `fix(web):`).
