@@ -73,6 +73,30 @@ const DEV_ACCOUNTS: NetworkRegistry = {
 const STATIC_REGISTRY: Record<string, NetworkRegistry> = {
   allfeat: {
     ...DEV_ACCOUNTS,
+    qSwoJVKfgchSRjD6CZ739j9G7zR1khXqkvbeMVCN1NPKJgeup: {
+      name: 'Treasury',
+      kind: 'treasury',
+    },
+    qSysBTZC3yQRKNroife4djUTQwnfVxHQ19PpxgHKcRFJszHRA: {
+      name: 'Sudo',
+      kind: 'sudo',
+    },
+    qSuThURyMoCfggEMKFSL1j1V9TH3vhvLF5cKGaQKxYPAWfSby: {
+      name: 'MusicDASH',
+      kind: 'validator',
+    },
+    qSujxSNtCBdLQbXvmwWmY8Vtk19EKK3zcA1e5bFfEGgscD83J: {
+      name: 'Snow-Fall',
+      kind: 'validator',
+    },
+    qSv3xY3t1rFkhxvpSBdqChhwjTCqJ1qJjNoq5ZKFo8vvTgms4: {
+      name: 'Allfeat Foundation 1',
+      kind: 'validator',
+    },
+    qSuo1LcUoi7JFNQbar8r8N7JN9JSMggsFEUKcPWc6sEyPjiFa: {
+      name: 'Allfeat Foundation 2',
+      kind: 'validator',
+    },
   },
   melodie: {
     ...DEV_ACCOUNTS,
