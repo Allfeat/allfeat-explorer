@@ -1,0 +1,29 @@
+name: Release Please
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Use a PAT (RELEASE_PLEASE_TOKEN) when available so the tag push from
+      # this workflow triggers downstream workflows (notably images.yml).
+      # GitHub's default GITHUB_TOKEN cannot trigger other workflow runs.
+      # Falls back to GITHUB_TOKEN: release PRs and tags still get created,
+      # but image builds for new tags must be re-dispatched manually.
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -3,7 +3,9 @@ name: Publish container images
 on:
   push:
     branches: [master]
-    tags: ['v*']
+    tags:
+      - 'backend-v*'
+      - 'web-v*'
   workflow_dispatch:
 
 concurrency:
@@ -22,6 +24,10 @@ jobs:
   build:
     name: build & push (${{ matrix.component }})
     runs-on: ubuntu-latest
+    # On a tag push, only build the component the tag is for. Branch pushes
+    # and manual dispatches build both. release-please emits component-scoped
+    # tags (`backend-v0.1.3`, `web-v0.1.4`).
+    if: ${{ github.ref_type != 'tag' || startsWith(github.ref_name, format('{0}-v', matrix.component)) }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,10 +53,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Tag strategy:
-      #   * `main`        → rolling tag for the default branch
-      #   * `sha-<short>` → stable pin the GitOps repo can bump to
-      #   * `v1.2.3`      → emitted when a git tag is pushed
-      #   * `latest`      → moved only on a git tag (never on branch pushes)
+      #   * `master`           → rolling tag for the default branch
+      #   * `sha-<short>`      → stable pin the GitOps repo can bump to
+      #   * `1.2.3`, `1.2`     → emitted from `<component>-v*` git tags via type=match
+      #   * `latest`           → moved only on a tag for *this* component
       - name: Compute image tags
         id: meta
         uses: docker/metadata-action@v5
@@ -59,9 +65,9 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha,format=short,prefix=sha-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=match,pattern=${{ matrix.component }}-v(\d+\.\d+\.\d+),group=1
+            type=match,pattern=${{ matrix.component }}-v(\d+\.\d+),group=1
+            type=raw,value=latest,enable=${{ startsWith(github.ref, format('refs/tags/{0}-v', matrix.component)) }}
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -81,3 +87,65 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
           provenance: false
+
+  # GitOps: after a release tag is built and pushed to GHCR, bump the
+  # corresponding image newTag in Allfeat/infra-web3 so ArgoCD rolls it out.
+  # Tag pushes only — branch builds use the floating `master` / `sha-*` tags
+  # which the GitOps repo doesn't track.
+  bump-infra:
+    name: bump infra-web3
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # Serialize across all tag refs so concurrent backend + web releases
+    # don't race on the same kustomization.yaml in infra-web3.
+    concurrency:
+      group: bump-infra-web3
+      cancel-in-progress: false
+    steps:
+      - name: Parse tag
+        id: tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          COMPONENT="${TAG%%-v*}"
+          VERSION="${TAG#*-v}"
+          case "$COMPONENT" in
+            backend) IMAGE_NAME=IMAGE_BACKEND ;;
+            web)     IMAGE_NAME=IMAGE_WEB ;;
+            *) echo "::error::unknown component '$COMPONENT' from tag '$TAG'"; exit 1 ;;
+          esac
+          {
+            echo "component=$COMPONENT"
+            echo "version=$VERSION"
+            echo "image_name=$IMAGE_NAME"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout infra-web3
+        uses: actions/checkout@v4
+        with:
+          repository: Allfeat/infra-web3
+          token: ${{ secrets.CI_INFRA_WEB3_PAT }}
+          ref: master
+          path: infra-web3
+
+      - name: Bump image tag and push
+        working-directory: infra-web3
+        env:
+          IMAGE_NAME: ${{ steps.tag.outputs.image_name }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          COMPONENT: ${{ steps.tag.outputs.component }}
+        run: |
+          set -euo pipefail
+          FILE="kubernetes/overlays/prod/apps/allfeat-explorer/kustomization.yaml"
+          yq -i '(.images[] | select(.name == strenv(IMAGE_NAME)) | .newTag) = strenv(VERSION)' "$FILE"
+          if git diff --quiet -- "$FILE"; then
+            echo "::notice::infra-web3 already at ${VERSION} for ${IMAGE_NAME}, nothing to commit"
+            exit 0
+          fi
+          git --no-pager diff -- "$FILE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FILE"
+          git commit -m "ci(prod): bump allfeat-explorer-${COMPONENT} to ${VERSION}"
+          git push origin master
