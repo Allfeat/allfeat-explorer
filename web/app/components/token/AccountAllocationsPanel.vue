@@ -112,12 +112,14 @@ const msUntilNextEpoch = computed<number>(() => {
 const anchorMs = ref<number>(0)
 onMounted(() => { anchorMs.value = Date.now() })
 
-const remainingMs = computed<number>(() => {
-  if (msUntilNextEpoch.value <= 0) return 0
-  if (anchorMs.value === 0) return msUntilNextEpoch.value
+function liveRemainingMs(anchorVal: number): number {
+  if (anchorVal <= 0) return 0
+  if (anchorMs.value === 0) return anchorVal
   const elapsed = now.value - anchorMs.value
-  return Math.max(0, msUntilNextEpoch.value - elapsed)
-})
+  return Math.max(0, anchorVal - elapsed)
+}
+
+const remainingMs = computed<number>(() => liveRemainingMs(msUntilNextEpoch.value))
 
 function fmtCountdown(ms: number): string {
   if (ms <= 0) return 'imminent'
@@ -133,6 +135,54 @@ function fmtCountdown(ms: number): string {
 }
 
 const countdownLabel = computed<string>(() => fmtCountdown(remainingMs.value))
+
+// Per-allocation cliff state. `start_block` is already clamped to
+// `max(allocation.start, envelope.cliff)` upstream, so a single comparison
+// against the current head is enough to detect an in-cliff allocation.
+// `anchorMs` is captured at prop-refresh time; the template subtracts
+// wall-clock drift via liveRemainingMs to tick the countdown.
+const cliffByAllocation = computed<Map<number, number>>(() => {
+  const out = new Map<number, number>()
+  if (!props.epoch) return out
+  const head = toBigIntSafe(props.epoch.head_block)
+  for (const a of props.allocations) {
+    const start = toBigIntSafe(a.start_block)
+    if (head < start) {
+      out.set(a.id, blocksToMs(start - head, props.blockTimeSecs ?? 0))
+    }
+  }
+  return out
+})
+
+function isInCliff(a: Allocation): boolean {
+  return cliffByAllocation.value.has(a.id)
+}
+
+function allocCliffLabel(a: Allocation): string {
+  const anchor = cliffByAllocation.value.get(a.id)
+  if (anchor === undefined) return ''
+  return fmtCountdown(liveRemainingMs(anchor))
+}
+
+const allInCliff = computed<boolean>(() =>
+  props.allocations.length > 0
+  && props.allocations.every(a => cliffByAllocation.value.has(a.id)),
+)
+
+// Earliest cliff end across all allocations — the moment the aggregate
+// "next distribution" display starts behaving again, so the most
+// informative countdown for the summary cell.
+const summaryCliffAnchorMs = computed<number>(() => {
+  let min = Infinity
+  for (const v of cliffByAllocation.value.values()) {
+    if (v < min) min = v
+  }
+  return min === Infinity ? 0 : min
+})
+
+const summaryCliffLabel = computed<string>(() =>
+  fmtCountdown(liveRemainingMs(summaryCliffAnchorMs.value)),
+)
 </script>
 
 <template>
@@ -153,15 +203,22 @@ const countdownLabel = computed<string>(() => fmtCountdown(remainingMs.value))
       </div>
       <div class="alloc-summary-cell alloc-summary-next">
         <div class="alloc-summary-next-head">
-          <span class="next-epoch-dot" aria-hidden="true" />
-          <div class="ui-label">Next distribution</div>
+          <span v-if="allInCliff" class="cliff-dot" aria-hidden="true" />
+          <span v-else class="next-epoch-dot" aria-hidden="true" />
+          <div class="ui-label">{{ allInCliff ? 'Cliff period' : 'Next distribution' }}</div>
         </div>
-        <div class="alloc-summary-amount" :class="{ 'pos': totalNextEpoch > 0n }">
-          {{ fmtAFT(totalNextEpoch, decimals, 2) }}
-        </div>
-        <div v-if="hasEpochData" class="next-epoch-timer mono">
-          in {{ countdownLabel }}
-        </div>
+        <template v-if="allInCliff">
+          <div class="alloc-summary-amount cliff">ends in {{ summaryCliffLabel }}</div>
+          <div class="next-epoch-timer">All allocations in cliff</div>
+        </template>
+        <template v-else>
+          <div class="alloc-summary-amount" :class="{ 'pos': totalNextEpoch > 0n }">
+            {{ fmtAFT(totalNextEpoch, decimals, 2) }}
+          </div>
+          <div v-if="hasEpochData" class="next-epoch-timer mono">
+            in {{ countdownLabel }}
+          </div>
+        </template>
       </div>
     </div>
 
@@ -189,12 +246,19 @@ const countdownLabel = computed<string>(() => fmtCountdown(remainingMs.value))
             {{ fmtAFT(a.released, decimals, 2) }}
           </td>
           <td data-label="Next distribution" class="right mono">
-            <span class="next-epoch-cell" :class="{ 'next-epoch-cell-active': nextEpochReceive(a) > 0n }">
+            <span v-if="isInCliff(a)" class="cliff-cell">
+              <span class="cliff-cell-dot" aria-hidden="true" />
+              Cliff · {{ allocCliffLabel(a) }}
+            </span>
+            <span v-else class="next-epoch-cell" :class="{ 'next-epoch-cell-active': nextEpochReceive(a) > 0n }">
               <span v-if="nextEpochReceive(a) > 0n" class="next-epoch-cell-dot" aria-hidden="true" />
               {{ fmtAFT(nextEpochReceive(a), decimals, 2) }}
             </span>
           </td>
-          <td data-label="Vested" class="right mono text-xs dim">{{ a.percent_vested }}%</td>
+          <td data-label="Vested" class="right mono text-xs dim">
+            <span v-if="isInCliff(a)" class="cliff-vested">in cliff</span>
+            <template v-else>{{ a.percent_vested }}%</template>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -299,6 +363,49 @@ const countdownLabel = computed<string>(() => fmtCountdown(remainingMs.value))
   box-shadow: 0 0 0 0 rgba(0, 177, 140, 0.55);
   animation: next-epoch-pulse 1.8s ease-in-out infinite;
   flex-shrink: 0;
+}
+
+/* Cliff state — neutral/muted styling that communicates "waiting, not
+   distributing yet" without looking like an error or a zero-value bug.
+   Reuses the cream-200 tone from the shared warn palette. */
+.cliff-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.alloc-summary-amount.cliff {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink-dim);
+  letter-spacing: 0;
+}
+
+.cliff-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  color: var(--ink-dim);
+  font-weight: 500;
+}
+
+.cliff-cell-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
+.cliff-vested {
+  color: var(--ink-dimmer);
+  font-style: italic;
 }
 
 @media (max-width: 720px) {
