@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.2.0...backend-v0.2.1) (2026-04-25)
+
+
+### Performance
+
+* **api:** batch reconcile_account_balances writes ([80c883f](https://github.com/Allfeat/allfeat-explorer/commit/80c883f765f492f086973bb0b0ea02afb64747be))
+* **api:** enable gzip + brotli response compression ([263ae3e](https://github.com/Allfeat/allfeat-explorer/commit/263ae3e9a1a2a2054cd74f3436e0894f6767761d))
+* **api:** share live-stream encoding across WS sessions ([19af2aa](https://github.com/Allfeat/allfeat-explorer/commit/19af2aa6651461f30e3ab4ac57458e24bf29b432))
+
 ## [0.2.0](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.1.2...backend-v0.2.0) (2026-04-24)
 
 
