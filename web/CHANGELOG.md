@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.2.0...web-v0.3.0) (2026-04-25)
+
+
+### Features
+
+* **web:** replace gradient identicon with per-address waveform ([77fca80](https://github.com/Allfeat/allfeat-explorer/commit/77fca80ef6b2da685602e2a93fc848a2fc2f07db))
+* **web:** show cliff period state in account allocations panel ([527c87b](https://github.com/Allfeat/allfeat-explorer/commit/527c87be10fafcbb279c1accd354876bcb9c07bb))
+
+
+### Bug Fixes
+
+* **web:** use memory driver for Nitro dev cache ([267667d](https://github.com/Allfeat/allfeat-explorer/commit/267667ddd03234f009e6d0d5b6fb53d92a7db12d))
+
 ## [0.2.0](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.1.2...web-v0.2.0) (2026-04-24)
 
 
