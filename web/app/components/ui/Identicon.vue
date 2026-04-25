@@ -1,7 +1,9 @@
 <script setup lang="ts">
-// Deterministic circular swatch derived from the seed (usually an SS58
-// address). `large` applies the .identicon-lg modifier (56px); arbitrary
-// sizes use the `size` prop which emits inline width/height overrides.
+// Per-address waveform fingerprint — see utils/identicon.ts for the
+// hashing + parameter derivation. `large` applies the .identicon-lg
+// modifier (56px); arbitrary sizes use the `size` prop which emits
+// inline width/height overrides. The disc carries a coloured glow via
+// the `--identicon-color` custom property the script writes.
 
 const props = withDefaults(defineProps<{
   seed: string
@@ -12,10 +14,15 @@ const props = withDefaults(defineProps<{
   large: false,
 })
 
-const gradient = computed(() => identiconGradient(props.seed))
+const VIEW_BOX = 100
+const MARGIN = 10
 
-const inlineStyle = computed(() => {
-  const style: Record<string, string> = { background: gradient.value }
+const params = computed(() => identiconParams(props.seed))
+const color = computed(() => identiconColor(params.value))
+const path = computed(() => identiconPath(params.value, VIEW_BOX, MARGIN))
+
+const inlineStyle = computed<Record<string, string>>(() => {
+  const style: Record<string, string> = { '--identicon-color': color.value }
   if (props.size != null) {
     style.width = `${props.size}px`
     style.height = `${props.size}px`
@@ -30,5 +37,14 @@ const inlineStyle = computed(() => {
     :class="{ 'identicon-lg': large }"
     :style="inlineStyle"
     aria-hidden="true"
-  />
+  >
+    <svg
+      :viewBox="`0 0 ${VIEW_BOX} ${VIEW_BOX}`"
+      class="identicon-svg"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <path :d="path" class="identicon-glow" :stroke="color" />
+      <path :d="path" class="identicon-wave" :stroke="color" />
+    </svg>
+  </span>
 </template>

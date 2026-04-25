@@ -1,6 +1,7 @@
-// Identicon swatch — conic-gradient computed per SS58 address (see
-// utils/identicon.ts). The fallback gradient keeps the look coherent when
-// rendered statically in the mockup.
+// Waveform identicon — colour + shape derived per SS58 address from
+// utils/identicon.ts. The disc stays uniformly dark across themes so
+// the wave colour reads consistently; `--identicon-color` is set
+// inline by the component and feeds the box-shadow glow.
 
 .identicon {
   width: 28px;
@@ -8,15 +9,35 @@
   border-radius: 50%;
   display: inline-block;
   flex-shrink: 0;
-  background: conic-gradient(
-    from 0deg,
-    var(--teal-500),
-    var(--red-500),
-    var(--cream-200),
-    var(--teal-700),
-    var(--teal-500)
-  );
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #1a1a18, #0c0c0b);
   border: 1px solid var(--line-2);
+  box-shadow:
+    inset 0 0 12px -2px color-mix(in oklab, var(--identicon-color, transparent) 40%, transparent),
+    0 0 8px -3px color-mix(in oklab, var(--identicon-color, transparent) 35%, transparent);
+}
+
+.identicon-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.identicon-glow,
+.identicon-wave {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.identicon-glow {
+  stroke-width: 8;
+  stroke-opacity: 0.18;
+}
+
+.identicon-wave {
+  stroke-width: 4;
 }
 
 .identicon-lg {
