@@ -67,6 +67,7 @@ type Row = (
 /// the "latest extrinsics" feed) apply that themselves.
 pub async fn extrinsics_in_block(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     block_num: u64,
     ss58_prefix: u16,
@@ -89,9 +90,9 @@ pub async fn extrinsics_in_block(
         })?;
     let mut out: Vec<Extrinsic> = rows
         .into_iter()
-        .map(|r| row_to_extrinsic(r, ss58_prefix))
+        .map(|r| row_to_extrinsic(r, network_id, ss58_prefix))
         .collect();
-    hydrate_events(pool, network_sid, &mut out, ss58_prefix).await?;
+    hydrate_events(pool, network_id, network_sid, &mut out, ss58_prefix).await?;
     Ok(out)
 }
 
@@ -104,6 +105,7 @@ pub async fn extrinsics_in_block(
 /// stays focused on user-visible calls.
 pub async fn latest_extrinsics(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     count: u32,
     ss58_prefix: u16,
@@ -130,9 +132,9 @@ pub async fn latest_extrinsics(
         })?;
     let mut out: Vec<Extrinsic> = rows
         .into_iter()
-        .map(|r| row_to_extrinsic(r, ss58_prefix))
+        .map(|r| row_to_extrinsic(r, network_id, ss58_prefix))
         .collect();
-    hydrate_events(pool, network_sid, &mut out, ss58_prefix).await?;
+    hydrate_events(pool, network_id, network_sid, &mut out, ss58_prefix).await?;
     Ok(out)
 }
 
@@ -148,12 +150,22 @@ pub async fn latest_extrinsics(
 /// overflow row is a matching row by construction.
 pub async fn list_extrinsics_page(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     req: &PageRequest,
     filters: &ExtrinsicFilters,
     ss58_prefix: u16,
 ) -> DataResult<Page<Extrinsic>> {
-    list_extrinsics_page_bounded(pool, network_sid, req, None, filters, ss58_prefix).await
+    list_extrinsics_page_bounded(
+        pool,
+        network_id,
+        network_sid,
+        req,
+        None,
+        filters,
+        ss58_prefix,
+    )
+    .await
 }
 
 /// Variant used by [`IndexedProvider`] when a buffered (pending-tip)
@@ -162,6 +174,7 @@ pub async fn list_extrinsics_page(
 /// enough when the pending slice already showed rows above the DB tip.
 pub async fn list_extrinsics_page_bounded(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     req: &PageRequest,
     strict_upper: Option<(u64, u32)>,
@@ -241,13 +254,13 @@ pub async fn list_extrinsics_page_bounded(
 
     let mut items: Vec<Extrinsic> = rows
         .into_iter()
-        .map(|r| row_to_extrinsic(r, ss58_prefix))
+        .map(|r| row_to_extrinsic(r, network_id, ss58_prefix))
         .collect();
     let has_more = items.len() > req.count as usize;
     if has_more {
         items.truncate(req.count as usize);
     }
-    hydrate_events(pool, network_sid, &mut items, ss58_prefix).await?;
+    hydrate_events(pool, network_id, network_sid, &mut items, ss58_prefix).await?;
     let next_cursor = if has_more {
         items.last().map(|e| {
             ExtrinsicCursor {
@@ -274,6 +287,7 @@ pub async fn list_extrinsics_page_bounded(
 /// RPC fallback (the banner already flags indexer lag).
 pub async fn extrinsic_by_block_idx(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     block_num: u64,
     idx: u32,
@@ -295,12 +309,18 @@ pub async fn extrinsic_by_block_idx(
                 "extrinsic_by_block_idx(net={network_sid}/{block_num},{idx}): {e}"
             ))
         })?;
-    let Some(mut ext) = row.map(|r| row_to_extrinsic(r, ss58_prefix)) else {
+    let Some(mut ext) = row.map(|r| row_to_extrinsic(r, network_id, ss58_prefix)) else {
         return Ok(None);
     };
-    ext.events =
-        events::events_for_extrinsic(pool, network_sid, ext.block_number, ext.index, ss58_prefix)
-            .await?;
+    ext.events = events::events_for_extrinsic(
+        pool,
+        network_id,
+        network_sid,
+        ext.block_number,
+        ext.index,
+        ss58_prefix,
+    )
+    .await?;
     Ok(Some(ext))
 }
 
@@ -310,6 +330,7 @@ pub async fn extrinsic_by_block_idx(
 /// `(block_num DESC, idx DESC)`.
 pub async fn extrinsic_by_hash(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     hash: &[u8],
     ss58_prefix: u16,
@@ -330,12 +351,18 @@ pub async fn extrinsic_by_hash(
         .fetch_optional(pool)
         .await
         .map_err(|e| DataError::Rpc(format!("extrinsic_by_hash(net={network_sid}): {e}")))?;
-    let Some(mut ext) = row.map(|r| row_to_extrinsic(r, ss58_prefix)) else {
+    let Some(mut ext) = row.map(|r| row_to_extrinsic(r, network_id, ss58_prefix)) else {
         return Ok(None);
     };
-    ext.events =
-        events::events_for_extrinsic(pool, network_sid, ext.block_number, ext.index, ss58_prefix)
-            .await?;
+    ext.events = events::events_for_extrinsic(
+        pool,
+        network_id,
+        network_sid,
+        ext.block_number,
+        ext.index,
+        ss58_prefix,
+    )
+    .await?;
     Ok(Some(ext))
 }
 
@@ -363,7 +390,7 @@ pub fn parse_lookup(id: &str) -> Option<ExtrinsicLookup> {
 /// as TEXT and round-trip through `u128::from_str`; an unparseable
 /// value would indicate index corruption and bubbles as a Decode error
 /// rather than silently zeroing.
-fn row_to_extrinsic(row: Row, ss58_prefix: u16) -> Extrinsic {
+fn row_to_extrinsic(row: Row, network_id: &str, ss58_prefix: u16) -> Extrinsic {
     let (
         block_num,
         idx,
@@ -388,7 +415,7 @@ fn row_to_extrinsic(row: Row, ss58_prefix: u16) -> Extrinsic {
     let signer_ss58 = signer.and_then(|bytes| encode_ss58_bytes(&bytes, ss58_prefix));
     let signed = signer_ss58.is_some();
 
-    let args = decode_call_args(&pallet, &call, &args_scale, ss58_prefix);
+    let args = decode_call_args(network_id, &pallet, &call, &args_scale, ss58_prefix);
 
     Extrinsic {
         id: format!("{block}-{index}"),
@@ -430,6 +457,7 @@ fn row_to_extrinsic(row: Row, ss58_prefix: u16) -> Extrinsic {
 /// guard.
 async fn hydrate_events(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     xts: &mut [Extrinsic],
     ss58_prefix: u16,
@@ -441,8 +469,14 @@ async fn hydrate_events(
     let same_block = xts.iter().all(|e| e.block_number == first_block);
 
     if same_block {
-        let by_idx =
-            events::events_by_ext_idx_in_block(pool, network_sid, first_block, ss58_prefix).await?;
+        let by_idx = events::events_by_ext_idx_in_block(
+            pool,
+            network_id,
+            network_sid,
+            first_block,
+            ss58_prefix,
+        )
+        .await?;
         for x in xts.iter_mut() {
             if let Some(evs) = by_idx.get(&x.index) {
                 x.events = evs.clone();
@@ -452,7 +486,8 @@ async fn hydrate_events(
     }
 
     let pairs: Vec<(u64, u32)> = xts.iter().map(|e| (e.block_number, e.index)).collect();
-    let mut by_pair = events::events_for_pairs(pool, network_sid, &pairs, ss58_prefix).await?;
+    let mut by_pair =
+        events::events_for_pairs(pool, network_id, network_sid, &pairs, ss58_prefix).await?;
     for x in xts.iter_mut() {
         if let Some(evs) = by_pair.remove(&(x.block_number, x.index)) {
             x.events = evs;

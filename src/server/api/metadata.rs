@@ -2,8 +2,9 @@
 //!
 //! These endpoints surface static runtime schema the UI needs to build
 //! filter controls — they're not paginated and don't depend on the
-//! provider. The data comes straight from the compiled `ALLFEAT_METADATA`
-//! blob, so the handler cost is a single `Vec<String>` allocation.
+//! provider. The data comes straight from the per-network metadata
+//! bundle (`ALLFEAT_RUNTIME` / `MELODIE_RUNTIME`), so the handler cost
+//! is a single `Vec<String>` allocation.
 
 use axum::extract::Path;
 use axum::Json;
@@ -17,19 +18,16 @@ pub struct PalletsResponse {
     pub pallets: Vec<String>,
 }
 
-/// Return the pallet names that declare at least one callable extrinsic.
-/// Used by the extrinsics list page to populate a pallet filter
-/// dropdown that matches the values actually stored in
-/// `extrinsics.pallet`.
-///
-/// The `network_id` is validated for parity with the rest of the REST
-/// surface; the payload itself is static because every supported
-/// network currently ships the same runtime metadata blob.
+/// Return the pallet names that declare at least one callable extrinsic
+/// for `network_id`. Used by the extrinsics list page to populate a
+/// pallet filter dropdown that matches the values actually stored in
+/// `extrinsics.pallet`. Each runtime ships its own pallet set, so the
+/// dropdown picks the matching catalogue.
 pub async fn list_pallets(
     Path(network_id): Path<String>,
 ) -> Result<Json<PalletsResponse>, ApiError> {
     let _ctx = ctx_for(&network_id)?;
     Ok(Json(PalletsResponse {
-        pallets: callable_pallet_names(),
+        pallets: callable_pallet_names(&network_id),
     }))
 }

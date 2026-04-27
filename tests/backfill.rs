@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allfeat_explorer::data::rpc::RpcClient;
+use allfeat_explorer::network::RuntimeKind;
 use allfeat_explorer::indexer::backfill::{self, BackfillWorker, DEFAULT_CHUNK_SIZE};
 use allfeat_explorer::server::health::{collect_status_from, IndexerState};
 
@@ -50,7 +51,7 @@ async fn indexes_short_range() {
     let pool = db.pool().clone();
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), TEST_NETWORK, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     // A tiny 6-block window keeps the test fast on CI; widening it
@@ -122,7 +123,7 @@ async fn parallel_workers_no_duplicate() {
     let pool = db.pool().clone();
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), TEST_NETWORK, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     // 16 single-block chunks covering `[head-15, head]`. Fine-grained
@@ -204,7 +205,7 @@ async fn resumes_after_worker_crash() {
     let pool = db.pool().clone();
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), TEST_NETWORK, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     let from = head.saturating_sub(3);
@@ -260,7 +261,7 @@ async fn shows_backfilling_state() {
     let pool = db.pool().clone();
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), TEST_NETWORK, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     // Initial sample: zero rows in `blocks`, so pct = 0, and the chain

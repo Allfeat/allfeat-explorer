@@ -37,6 +37,7 @@ pub async fn map_extrinsics<'a>(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     timestamp_ms: i64,
     events_by_phase: &EventsByPhase<'a>,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<Vec<Extrinsic>> {
     let block_number = at.block_number();
@@ -81,6 +82,7 @@ pub async fn map_extrinsics<'a>(
             let pallet_name = evt.pallet_name();
             let event_name = evt.event_name();
             let fields = crate::data::metadata::decode_event_fields(
+                network_id,
                 pallet_name,
                 event_name,
                 evt.field_bytes(),
@@ -111,7 +113,7 @@ pub async fn map_extrinsics<'a>(
             .map(|exts| (exts.nonce().map(|n| n as u32), exts.tip().unwrap_or(0)))
             .unwrap_or((None, 0));
 
-        let args = decode_args(&ext, ss58_prefix);
+        let args = decode_args(&ext, network_id, ss58_prefix);
 
         out.push(Extrinsic {
             id: extrinsic_id(block_number, idx),
@@ -145,12 +147,14 @@ pub async fn map_extrinsics<'a>(
 /// so the Parameters tab still shows the opaque bytes.
 fn decode_args<C>(
     ext: &subxt::extrinsics::Extrinsic<'_, SubstrateConfig, C>,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> ExtrinsicArgs
 where
     C: subxt::client::OfflineClientAtBlockT<SubstrateConfig>,
 {
     decode_call_args(
+        network_id,
         ext.pallet_name(),
         ext.call_name(),
         ext.call_data_bytes(),

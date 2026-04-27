@@ -35,6 +35,7 @@ use crate::indexer::projections::events::PHASE_APPLY_EXTRINSIC;
 /// phase_kind)` for the scan.
 pub async fn events_by_ext_idx_in_block(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     block_num: u64,
     ss58_prefix: u16,
@@ -62,7 +63,7 @@ pub async fn events_by_ext_idx_in_block(
     let mut out: HashMap<u32, Vec<EventRef>> = HashMap::new();
     for (phase_idx, pallet, variant, data_scale) in rows {
         let ext = phase_idx.max(0) as u32;
-        let fields = decode_event_fields(&pallet, &variant, &data_scale, ss58_prefix);
+        let fields = decode_event_fields(network_id, &pallet, &variant, &data_scale, ss58_prefix);
         out.entry(ext).or_default().push(EventRef {
             module: pallet,
             name: variant,
@@ -77,6 +78,7 @@ pub async fn events_by_ext_idx_in_block(
 /// don't care which backend served the read.
 pub async fn events_for_extrinsic(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     block_num: u64,
     ext_idx: u32,
@@ -105,7 +107,7 @@ pub async fn events_for_extrinsic(
     Ok(rows
         .into_iter()
         .map(|(module, name, data_scale)| {
-            let fields = decode_event_fields(&module, &name, &data_scale, ss58_prefix);
+            let fields = decode_event_fields(network_id, &module, &name, &data_scale, ss58_prefix);
             EventRef {
                 module,
                 name,
@@ -127,6 +129,7 @@ pub async fn events_for_extrinsic(
 /// the same `(block_num, ext_idx)` pair they sent.
 pub async fn events_for_pairs(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     pairs: &[(u64, u32)],
     ss58_prefix: u16,
@@ -160,7 +163,7 @@ pub async fn events_for_pairs(
 
     let mut out: HashMap<(u64, u32), Vec<EventRef>> = HashMap::with_capacity(pairs.len());
     for (b, i, pallet, variant, data_scale) in rows {
-        let fields = decode_event_fields(&pallet, &variant, &data_scale, ss58_prefix);
+        let fields = decode_event_fields(network_id, &pallet, &variant, &data_scale, ss58_prefix);
         out.entry((b.max(0) as u64, i.max(0) as u32))
             .or_default()
             .push(EventRef {

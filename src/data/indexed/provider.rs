@@ -309,8 +309,14 @@ impl ChainData for IndexedProvider {
         }
         let ss58_prefix = self.ss58_prefix(ctx);
         let sid = self.network_sid(ctx)?;
-        let db_rows =
-            queries::extrinsics::extrinsics_in_block(&self.pool, sid, block, ss58_prefix).await?;
+        let db_rows = queries::extrinsics::extrinsics_in_block(
+            &self.pool,
+            ctx.spec.id,
+            sid,
+            block,
+            ss58_prefix,
+        )
+        .await?;
         if !db_rows.is_empty() {
             return Ok(db_rows);
         }
@@ -413,6 +419,7 @@ impl ChainData for IndexedProvider {
             };
             let probe = queries::extrinsics::list_extrinsics_page_bounded(
                 &self.pool,
+                ctx.spec.id,
                 sid,
                 &probe_req,
                 probe_upper,
@@ -453,6 +460,7 @@ impl ChainData for IndexedProvider {
         let db_upper = last_buffered.or_else(|| cursor.map(|c| (c.block, c.index)));
         let db_page = queries::extrinsics::list_extrinsics_page_bounded(
             &self.pool,
+            ctx.spec.id,
             sid,
             &db_req,
             db_upper,
@@ -516,6 +524,7 @@ impl ChainData for IndexedProvider {
             ExtrinsicLookup::BlockIdx { block, idx } => {
                 if let Some(ext) = queries::extrinsics::extrinsic_by_block_idx(
                     &self.pool,
+                    ctx.spec.id,
                     sid,
                     block,
                     idx,
@@ -538,7 +547,14 @@ impl ChainData for IndexedProvider {
                 Ok(None)
             }
             ExtrinsicLookup::Hash(h) => {
-                queries::extrinsics::extrinsic_by_hash(&self.pool, sid, &h, ss58_prefix).await
+                queries::extrinsics::extrinsic_by_hash(
+                    &self.pool,
+                    ctx.spec.id,
+                    sid,
+                    &h,
+                    ss58_prefix,
+                )
+                .await
             }
         }
     }
@@ -560,7 +576,15 @@ impl ChainData for IndexedProvider {
         // a block window in the worst case.
         let ss58_prefix = self.ss58_prefix(ctx);
         let sid = self.network_sid(ctx)?;
-        queries::transfers::list_transfers_page(&self.pool, sid, &req, &filters, ss58_prefix).await
+        queries::transfers::list_transfers_page(
+            &self.pool,
+            ctx.spec.id,
+            sid,
+            &req,
+            &filters,
+            ss58_prefix,
+        )
+        .await
     }
 
     async fn account_by_address(

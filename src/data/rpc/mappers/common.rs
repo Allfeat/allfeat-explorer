@@ -133,6 +133,7 @@ pub fn map_block_events(
     block_number: u64,
     timestamp_ms: i64,
     events: &Events<SubstrateConfig>,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<Vec<BlockEvent>> {
     let mut out = Vec::with_capacity(events.len() as usize);
@@ -142,6 +143,7 @@ pub fn map_block_events(
         let module = evt.pallet_name().to_string();
         let name = evt.event_name().to_string();
         let fields = crate::data::metadata::decode_event_fields(
+            network_id,
             &module,
             &name,
             evt.field_bytes(),

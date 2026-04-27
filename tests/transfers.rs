@@ -39,7 +39,7 @@ use allfeat_explorer::data::ChainData;
 use allfeat_explorer::domain::{CallResult, Extrinsic, ExtrinsicArgs, Transfer};
 use allfeat_explorer::indexer::backfill::BackfillWorker;
 use allfeat_explorer::indexer::buffer::{shared, BufferedBlock};
-use allfeat_explorer::network::{ChainCtx, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
 use subxt::utils::AccountId32;
 
 use common::{
@@ -99,7 +99,7 @@ async fn sender_side_transfers(
 async fn history_for_known_account() {
     let db = fresh_db().await;
     let pool = db.pool().clone();
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     // 100 blocks is wide enough to catch a sporadic faucet drip without
@@ -219,7 +219,7 @@ async fn live_stream_emits_on_new_block() {
     // Provider built around the shared buffer + a dummy RPC stack.
     // We never invoke RPC-only methods in this test, so the URL
     // doesn't have to be reachable.
-    let rpc_client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let rpc_client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let rpc = Arc::new(melodie_provider(rpc_client));
     let (networks, _author_lookup) = fresh_lookups(&pool).await;
     let _provider = IndexedProvider::new(

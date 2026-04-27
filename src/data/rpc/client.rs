@@ -46,6 +46,7 @@ use tokio::sync::{broadcast, watch, RwLock};
 use crate::data::error::{DataError, DataResult};
 use crate::data::rpc::mappers::hex_bytes;
 use crate::domain::{AtsFeedItem, Block, RuntimeCodeInfo, RuntimeIdentity, Transfer};
+use crate::network::RuntimeKind;
 
 use super::cache::Caches;
 use super::mappers;
@@ -91,11 +92,11 @@ pub const RPC_ITER_TIMEOUT: Duration = Duration::from_secs(60);
 /// accidental plaintext connections to public nodes.
 async fn connect_client(
     endpoint: &str,
-) -> Result<AllfeatClient, subxt::error::OnlineClientError> {
+) -> Result<SubxtClient, subxt::error::OnlineClientError> {
     if endpoint.starts_with("ws://") || endpoint.starts_with("http://") {
-        AllfeatClient::from_insecure_url(endpoint).await
+        SubxtClient::from_insecure_url(endpoint).await
     } else {
-        AllfeatClient::from_url(endpoint).await
+        SubxtClient::from_url(endpoint).await
     }
 }
 
@@ -146,12 +147,14 @@ where
     }
 }
 
-// SubstrateConfig matches Allfeat's runtime parameterization (AccountId32,
-// MultiAddress, MultiSignature, u32 block numbers, BlakeTwo256). If a
-// future Allfeat runtime diverges, switch to a custom `subxt::Config` impl
+// `SubstrateConfig` matches both supported runtimes (Allfeat mainnet and
+// Melodie testnet): same `AccountId32`, `MultiAddress`, `MultiSignature`,
+// `u32` block numbers, `BlakeTwo256`. Only the codegen `runtime_types::*`
+// differ per chain — the connection layer is uniform. If a future runtime
+// diverges on the `Config` axis, switch to a custom `subxt::Config` impl
 // here and everything downstream picks up the new types through the
 // `subxt()` accessor.
-pub type AllfeatClient = OnlineClient<SubstrateConfig>;
+pub type SubxtClient = OnlineClient<SubstrateConfig>;
 
 pub struct RpcClient {
     endpoint: String,
@@ -160,7 +163,7 @@ pub struct RpcClient {
     /// watcher-driven invalidation (stream error) is immediately visible
     /// to the next `subxt()` caller, and conversely a manual `invalidate()`
     /// forces the watcher to reconnect on its next iteration.
-    inner: Arc<RwLock<Option<AllfeatClient>>>,
+    inner: Arc<RwLock<Option<SubxtClient>>>,
     caches: Caches,
     /// Latest finalized block number observed by the subscription task.
     /// `None` until the first notification arrives (fresh connect, or right
@@ -213,6 +216,17 @@ pub struct RpcClient {
     /// often skip the `properties` block entirely, and one less RPC round
     /// trip keeps the first-paint path simpler.
     ss58_prefix: u16,
+    /// Network identifier this client serves (`NetworkSpec::id`). The
+    /// metadata-decoder API in [`crate::data::metadata`] keys per-network
+    /// blobs by this id, so the watcher task — which doesn't carry a
+    /// `ChainCtx` — can still resolve the correct runtime bundle from
+    /// the client itself.
+    network_id: &'static str,
+    /// Codegen runtime module this client reads through, seeded from
+    /// [`crate::network::NetworkSpec::runtime_kind`]. Mappers and
+    /// projections that need to address `runtime::allfeat::*` vs
+    /// `runtime::melodie::*` dispatch on it via [`Self::runtime_kind`].
+    runtime_kind: RuntimeKind,
 }
 
 /// Exit discriminator for the finalized-head stream consumer. Drives the
@@ -241,12 +255,18 @@ const WATCHER_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 const WATCHER_MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 impl RpcClient {
-    /// Build a client bound to `endpoint`. `ss58_prefix` comes from the
-    /// network's [`crate::network::NetworkSpec::ss58_prefix`] and is the
-    /// hardcoded source of truth for address encoding — see
-    /// [`Self::ss58_prefix`] for the rationale on not reading it from the
-    /// node.
-    pub fn new(endpoint: impl Into<String>, ss58_prefix: u16) -> Self {
+    /// Build a client bound to `endpoint`. `network_id`, `ss58_prefix`
+    /// and `runtime_kind` come from the matching
+    /// [`crate::network::NetworkSpec`] fields and are the hardcoded source
+    /// of truth for the per-network metadata bundle, address encoding,
+    /// and codegen-runtime dispatch — see [`Self::network_id`] /
+    /// [`Self::ss58_prefix`] / [`Self::runtime_kind`] for the rationale.
+    pub fn new(
+        endpoint: impl Into<String>,
+        network_id: &'static str,
+        ss58_prefix: u16,
+        runtime_kind: RuntimeKind,
+    ) -> Self {
         let (finalized_head_tx, finalized_head_rx) = watch::channel(None);
         let (best_head_tx, best_head_rx) = watch::channel(None);
         let (blocks_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
@@ -268,6 +288,8 @@ impl RpcClient {
             runtime_identity_cache: Arc::new(RwLock::new(None)),
             runtime_code_cache: Arc::new(RwLock::new(None)),
             ss58_prefix,
+            network_id,
+            runtime_kind,
         }
     }
 
@@ -280,7 +302,7 @@ impl RpcClient {
     /// bad state after a transient node outage. On a connect-time
     /// `DataError::Transport`, we invalidate and retry once before
     /// returning the error, matching the Phase 8 robustness contract.
-    pub async fn subxt(&self) -> DataResult<AllfeatClient> {
+    pub async fn subxt(&self) -> DataResult<SubxtClient> {
         match self.connect_or_reuse().await {
             Err(DataError::Transport(_)) => {
                 // First attempt failed mid-handshake — drop whatever was
@@ -293,9 +315,9 @@ impl RpcClient {
         }
     }
 
-    async fn connect_or_reuse(&self) -> DataResult<AllfeatClient> {
+    async fn connect_or_reuse(&self) -> DataResult<SubxtClient> {
         // Fast path: client already initialised — clone out of the read
-        // lock. `AllfeatClient` is internally `Arc<…>`, so cloning is cheap
+        // lock. `SubxtClient` is internally `Arc<…>`, so cloning is cheap
         // and doesn't hold the lock across any await boundaries.
         if let Some(client) = self.inner.read().await.as_ref() {
             return Ok(client.clone());
@@ -383,14 +405,27 @@ impl RpcClient {
         let at = race_timeout("at_current_block", api.at_current_block())
             .await?
             .map_err(|e| DataError::Rpc(format!("at_current_block: {e}")))?;
-        let min_period_ms: u64 = at
-            .constants()
-            .entry(
-                crate::data::rpc::runtime::allfeat::constants()
-                    .timestamp()
-                    .minimum_period(),
-            )
-            .map_err(|e| DataError::Decode(format!("decode Timestamp::MinimumPeriod: {e}")))?;
+        // The constant address is runtime-typed even though the SCALE
+        // payload is `u64` on both chains — dispatch on the tag so each
+        // arm references its own codegen module.
+        let min_period_ms: u64 = match self.runtime_kind {
+            RuntimeKind::Allfeat => at
+                .constants()
+                .entry(
+                    crate::data::rpc::runtime::allfeat::constants()
+                        .timestamp()
+                        .minimum_period(),
+                )
+                .map_err(|e| DataError::Decode(format!("decode Timestamp::MinimumPeriod: {e}")))?,
+            RuntimeKind::Melodie => at
+                .constants()
+                .entry(
+                    crate::data::rpc::runtime::melodie::constants()
+                        .timestamp()
+                        .minimum_period(),
+                )
+                .map_err(|e| DataError::Decode(format!("decode Timestamp::MinimumPeriod: {e}")))?,
+        };
         // Substrate convention: `MinimumPeriod = SlotDuration / 2`, so the
         // target block time is `2 × MinimumPeriod`. Dividing at the end
         // avoids a fractional-second loss when MinimumPeriod is odd ms.
@@ -448,7 +483,7 @@ impl RpcClient {
 
     /// Genesis block hash as rendered by polkadot.js / subxt (`0x` + 64
     /// hex). Cheap (in-memory read on the subxt client) so no caching
-    /// layer beyond the already-cached `AllfeatClient` itself.
+    /// layer beyond the already-cached `SubxtClient` itself.
     pub async fn genesis_hash(&self) -> DataResult<String> {
         let api = self.subxt().await?;
         Ok(hex_bytes(api.genesis_hash().as_ref()))
@@ -541,6 +576,22 @@ impl RpcClient {
         self.ss58_prefix
     }
 
+    /// Network id this client serves
+    /// ([`crate::network::NetworkSpec::id`]). Used by code paths that
+    /// don't carry a `ChainCtx` (the watcher task in particular) to look
+    /// up the matching metadata bundle in [`crate::data::metadata`].
+    pub fn network_id(&self) -> &'static str {
+        self.network_id
+    }
+
+    /// Codegen runtime module this client reads through. Hardcoded at
+    /// construction from [`crate::network::NetworkSpec::runtime_kind`];
+    /// mappers and projections dispatch on it to pick the matching
+    /// `runtime::{allfeat,melodie}::*` symbols.
+    pub fn runtime_kind(&self) -> RuntimeKind {
+        self.runtime_kind
+    }
+
     /// Clone of the finalized-head watch channel. Consumers that need to
     /// react to new heads (indexer live worker, status endpoint cache,
     /// future best-block reconciliation) ride the same supervisor that
@@ -616,6 +667,7 @@ impl RpcClient {
         let ats_feed_tx = self.ats_feed_tx.clone();
         let alive = self.watcher_alive.clone();
         let ss58_prefix = self.ss58_prefix;
+        let network_id = self.network_id;
 
         tokio::spawn(async move {
             run_watcher_supervisor(
@@ -627,6 +679,7 @@ impl RpcClient {
                 blocks_tx,
                 transfers_tx,
                 ats_feed_tx,
+                network_id,
                 ss58_prefix,
             )
             .await;
@@ -643,7 +696,7 @@ impl RpcClient {
 ///
 /// Loop contract:
 ///
-/// 1. Acquire (or reuse) a live `AllfeatClient` via the shared `inner`
+/// 1. Acquire (or reuse) a live `SubxtClient` via the shared `inner`
 ///    slot. On transport failure, sleep `backoff` and retry.
 /// 2. Drive one pass of [`run_streams`] on that client. This races a
 ///    best-block enrichment loop against a lightweight finalized-head
@@ -659,13 +712,14 @@ impl RpcClient {
 #[allow(clippy::too_many_arguments)]
 async fn run_watcher_supervisor(
     endpoint: String,
-    inner: Arc<RwLock<Option<AllfeatClient>>>,
+    inner: Arc<RwLock<Option<SubxtClient>>>,
     head_tx: watch::Sender<Option<u64>>,
     head_rx: watch::Receiver<Option<u64>>,
     best_head_tx: watch::Sender<Option<u64>>,
     blocks_tx: broadcast::Sender<Block>,
     transfers_tx: broadcast::Sender<Transfer>,
     ats_feed_tx: broadcast::Sender<AtsFeedItem>,
+    network_id: &'static str,
     ss58_prefix: u16,
 ) {
     let mut backoff = WATCHER_INITIAL_BACKOFF;
@@ -694,6 +748,7 @@ async fn run_watcher_supervisor(
             &blocks_tx,
             &transfers_tx,
             &ats_feed_tx,
+            network_id,
             ss58_prefix,
         )
         .await
@@ -727,8 +782,8 @@ async fn run_watcher_supervisor(
 /// already handles retry via its restart loop.
 async fn ensure_watcher_client(
     endpoint: &str,
-    inner: &Arc<RwLock<Option<AllfeatClient>>>,
-) -> DataResult<AllfeatClient> {
+    inner: &Arc<RwLock<Option<SubxtClient>>>,
+) -> DataResult<SubxtClient> {
     if let Some(c) = inner.read().await.as_ref() {
         return Ok(c.clone());
     }
@@ -766,18 +821,19 @@ async fn ensure_watcher_client(
 /// supervisor's reconnect policy runs once for both subscriptions.
 #[allow(clippy::too_many_arguments)]
 async fn run_streams(
-    client: &AllfeatClient,
+    client: &SubxtClient,
     head_tx: &watch::Sender<Option<u64>>,
     head_rx: watch::Receiver<Option<u64>>,
     best_head_tx: &watch::Sender<Option<u64>>,
     blocks_tx: &broadcast::Sender<Block>,
     transfers_tx: &broadcast::Sender<Transfer>,
     ats_feed_tx: &broadcast::Sender<AtsFeedItem>,
+    network_id: &'static str,
     ss58_prefix: u16,
 ) -> StreamExit {
     tokio::select! {
         exit = run_finalized_head_watch(client, head_tx, blocks_tx, ss58_prefix) => exit,
-        exit = run_best_stream(client, head_rx, best_head_tx, blocks_tx, transfers_tx, ats_feed_tx, ss58_prefix) => exit,
+        exit = run_best_stream(client, head_rx, best_head_tx, blocks_tx, transfers_tx, ats_feed_tx, network_id, ss58_prefix) => exit,
     }
 }
 
@@ -789,7 +845,7 @@ async fn run_streams(
 /// [`mappers::map_block`] to match the shape emitted by the best-stream —
 /// the finalized-block LRU on the provider makes repeat reads free.
 async fn run_finalized_head_watch(
-    client: &AllfeatClient,
+    client: &SubxtClient,
     head_tx: &watch::Sender<Option<u64>>,
     blocks_tx: &broadcast::Sender<Block>,
     ss58_prefix: u16,
@@ -855,12 +911,13 @@ async fn run_finalized_head_watch(
 /// explorer stays RPC-cheap.
 #[allow(clippy::too_many_arguments)]
 async fn run_best_stream(
-    client: &AllfeatClient,
+    client: &SubxtClient,
     head_rx: watch::Receiver<Option<u64>>,
     best_head_tx: &watch::Sender<Option<u64>>,
     blocks_tx: &broadcast::Sender<Block>,
     transfers_tx: &broadcast::Sender<Transfer>,
     ats_feed_tx: &broadcast::Sender<AtsFeedItem>,
+    network_id: &'static str,
     ss58_prefix: u16,
 ) -> StreamExit {
     let mut stream = match client.stream_best_blocks().await {
@@ -925,7 +982,7 @@ async fn run_best_stream(
         // phase index across both mappers. Early-return each failure
         // independently so one ladder stays flat.
         if has_transfers {
-            if let Err(e) = enrich_transfers(&at, transfers_tx, ss58_prefix).await {
+            if let Err(e) = enrich_transfers(&at, transfers_tx, network_id, ss58_prefix).await {
                 tracing::debug!(error = %e, number, "enrich skip: transfers");
             }
         }
@@ -936,7 +993,16 @@ async fn run_best_stream(
                     let previous = last_next_ats_id.unwrap_or(current);
                     if current > previous {
                         let delta = (current - previous).min(u32::MAX as u64) as u32;
-                        match mappers::build_ats_feed(client, &at, delta, 0, ss58_prefix).await {
+                        match mappers::build_ats_feed(
+                            client,
+                            &at,
+                            delta,
+                            0,
+                            network_id,
+                            ss58_prefix,
+                        )
+                        .await
+                        {
                             Ok(feed) => {
                                 // `build_ats_feed` returns newest-first.
                                 // Emit chronologically so the consumer's
@@ -966,12 +1032,15 @@ async fn run_best_stream(
 async fn enrich_transfers(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     transfers_tx: &broadcast::Sender<Transfer>,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<()> {
     let timestamp_ms = mappers::fetch_timestamp(at).await?;
     let events = mappers::fetch_block_events(at).await?;
     let events_by_phase = mappers::index_events_by_phase(&events)?;
-    let xs = mappers::map_extrinsics(at, timestamp_ms, &events_by_phase, ss58_prefix).await?;
+    let xs =
+        mappers::map_extrinsics(at, timestamp_ms, &events_by_phase, network_id, ss58_prefix)
+            .await?;
     for t in mappers::map_transfers(&xs, &events_by_phase, ss58_prefix)? {
         let _ = transfers_tx.send(t);
     }
@@ -1025,7 +1094,7 @@ mod tests {
     /// fallback path in `finalized_head_number`.
     #[tokio::test]
     async fn finalized_head_is_none_before_first_notification() {
-        let client = RpcClient::new("ws://127.0.0.1:9", 42);
+        let client = RpcClient::new("ws://127.0.0.1:9", "allfeat", 42, RuntimeKind::Allfeat);
         assert_eq!(client.finalized_head(), None);
     }
 
@@ -1074,7 +1143,7 @@ mod tests {
     /// stale finalized head can't survive a disconnect.
     #[tokio::test]
     async fn invalidate_resets_watch_to_none() {
-        let client = RpcClient::new("ws://127.0.0.1:9", 42);
+        let client = RpcClient::new("ws://127.0.0.1:9", "allfeat", 42, RuntimeKind::Allfeat);
         // Simulate the subscription having published at some point in the
         // past. We push through the tx side directly; in production only
         // the spawned task writes here.
@@ -1095,7 +1164,7 @@ mod tests {
     /// exercise the retry arm without a real dev node.
     #[tokio::test]
     async fn subxt_retries_once_on_transport_error_then_gives_up() {
-        let client = RpcClient::new("ws://127.0.0.1:9", 42);
+        let client = RpcClient::new("ws://127.0.0.1:9", "allfeat", 42, RuntimeKind::Allfeat);
         let err = client.subxt().await.expect_err("port 9 must refuse");
         assert!(
             matches!(err, DataError::Transport(_)),

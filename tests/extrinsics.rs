@@ -37,7 +37,7 @@ use allfeat_explorer::data::ChainData;
 use allfeat_explorer::domain::{CallResult, Extrinsic, ExtrinsicArgs};
 use allfeat_explorer::indexer::backfill::BackfillWorker;
 use allfeat_explorer::indexer::buffer::{shared, BufferedBlock};
-use allfeat_explorer::network::{ChainCtx, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
 
 use common::{
     dev_node_url, fresh_db, fresh_lookups, lookup_cell, wait_for_chunk_status,
@@ -67,7 +67,7 @@ fn melodie_ctx() -> ChainCtx {
 async fn lookup_by_hash_from_db() {
     let db = fresh_db().await;
     let pool = db.pool().clone();
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     // A ~10-block window is enough to find a `timestamp.set` inherent
@@ -155,7 +155,7 @@ async fn lookup_by_hash_from_db() {
 async fn extrinsic_by_id_round_trips_through_provider() {
     let db = fresh_db().await;
     let pool = db.pool().clone();
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     let from = head.saturating_sub(8);
@@ -276,7 +276,7 @@ async fn buffer_lookup_tip() {
     // we only invoke `extrinsic_by_id`. A dummy client pointed at the
     // same URL keeps construction cheap and avoids introducing a
     // mock dependency.
-    let rpc_client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let rpc_client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let rpc = Arc::new(melodie_provider(rpc_client));
     let (networks, _author_lookup) = fresh_lookups(&pool).await;
     let provider = IndexedProvider::new(

@@ -605,7 +605,7 @@ impl ChainData for MockProvider {
             genesis_hash: format!("0x{}", "ab".repeat(32)),
             at_block,
             at_block_hash: format!("0x{:064x}", at_block),
-            metadata_version: crate::data::metadata::METADATA_VERSION,
+            metadata_version: crate::data::metadata::metadata_version_for(ctx.spec.id),
         })
     }
 

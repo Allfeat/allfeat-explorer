@@ -147,12 +147,14 @@ async fn fetch_version_extras(
     ats_id: u64,
     version: u32,
     owner: &AccountId32,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<VersionExtras> {
     let timestamp_ms = fetch_timestamp(at).await?;
     let events = fetch_block_events(at).await?;
     let events_by_phase = index_events_by_phase(&events)?;
-    let extrinsics = map_extrinsics(at, timestamp_ms, &events_by_phase, ss58_prefix).await?;
+    let extrinsics =
+        map_extrinsics(at, timestamp_ms, &events_by_phase, network_id, ss58_prefix).await?;
 
     // Walk the phase-indexed events to find the AtsCreated / AtsUpdated that
     // matches `(ats_id, version)`. The outer key already carries the extrinsic
@@ -212,9 +214,10 @@ fn ats_id_u32(id: u64) -> u32 {
 /// older blocks may be outside the pinned window) to resolve timestamp,
 /// extrinsic index, fee and signer.
 pub async fn build_ats_record(
-    api: &crate::data::rpc::client::AllfeatClient,
+    api: &crate::data::rpc::client::SubxtClient,
     at_tip: &OnlineClientAtBlock<SubstrateConfig>,
     ats_id: u64,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<Option<AtsRecord>> {
     let Some(record) = fetch_ats_registry_entry(at_tip, ats_id).await? else {
@@ -239,7 +242,15 @@ pub async fn build_ats_record(
         .await;
         let extras = match at_result {
             Ok(v_at) => {
-                fetch_version_extras(&v_at, ats_id, v_idx, &record.owner, ss58_prefix).await?
+                fetch_version_extras(
+                    &v_at,
+                    ats_id,
+                    v_idx,
+                    &record.owner,
+                    network_id,
+                    ss58_prefix,
+                )
+                .await?
             }
             Err(_) => VersionExtras {
                 timestamp_ms: 0,
@@ -297,10 +308,11 @@ pub async fn build_ats_record(
 /// preserved, and dropping the stream once `count` is filled cancels the
 /// trailing in-flight tasks.
 pub async fn build_ats_list(
-    api: &crate::data::rpc::client::AllfeatClient,
+    api: &crate::data::rpc::client::SubxtClient,
     at_tip: &OnlineClientAtBlock<SubstrateConfig>,
     count: u32,
     from_index: u32,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<Vec<AtsRecord>> {
     if count == 0 {
@@ -311,7 +323,7 @@ pub async fn build_ats_list(
         return Ok(Vec::new());
     }
 
-    let mut stream = fan_out_ats_records(api, at_tip, next, ss58_prefix);
+    let mut stream = fan_out_ats_records(api, at_tip, next, network_id, ss58_prefix);
     let mut out = Vec::with_capacity(count as usize);
     let mut skipped: u32 = 0;
     while let Some(rec) = stream.next().await.transpose()? {
@@ -334,9 +346,10 @@ pub async fn build_ats_list(
 /// `None` for revoked slots so callers can skip them while preserving the
 /// natural registry order via `buffered` (not `buffer_unordered`).
 fn fan_out_ats_records<'a>(
-    api: &'a crate::data::rpc::client::AllfeatClient,
+    api: &'a crate::data::rpc::client::SubxtClient,
     at_tip: &'a OnlineClientAtBlock<SubstrateConfig>,
     next: u64,
+    network_id: &'a str,
     ss58_prefix: u16,
 ) -> impl futures::Stream<Item = DataResult<Option<AtsRecord>>> + 'a {
     // `next` is one past the last-allocated id. Iterate `[0, next)` in
@@ -345,7 +358,7 @@ fn fan_out_ats_records<'a>(
         .map(move |id| {
             let api = api.clone();
             let at_tip = at_tip.clone();
-            async move { build_ats_record(&api, &at_tip, id, ss58_prefix).await }
+            async move { build_ats_record(&api, &at_tip, id, network_id, ss58_prefix).await }
         })
         .buffered(ATS_CONCURRENCY)
 }
@@ -354,10 +367,11 @@ fn fan_out_ats_records<'a>(
 /// records descending through the parallel fan-out; for each, emits versions
 /// latest-first.
 pub async fn build_ats_feed(
-    api: &crate::data::rpc::client::AllfeatClient,
+    api: &crate::data::rpc::client::SubxtClient,
     at_tip: &OnlineClientAtBlock<SubstrateConfig>,
     count: u32,
     from_index: u32,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<Vec<AtsFeedItem>> {
     if count == 0 {
@@ -368,7 +382,7 @@ pub async fn build_ats_feed(
         return Ok(Vec::new());
     }
 
-    let mut stream = fan_out_ats_records(api, at_tip, next, ss58_prefix);
+    let mut stream = fan_out_ats_records(api, at_tip, next, network_id, ss58_prefix);
     let mut out = Vec::with_capacity(count as usize);
     let mut skipped: u32 = 0;
     while let Some(rec) = stream.next().await.transpose()? {
@@ -426,10 +440,11 @@ pub async fn build_account_ats_count(
 
 /// All ATS records owned by `address`, newest-first, capped at `limit`.
 pub async fn build_account_ats(
-    api: &crate::data::rpc::client::AllfeatClient,
+    api: &crate::data::rpc::client::SubxtClient,
     at_tip: &OnlineClientAtBlock<SubstrateConfig>,
     address: &str,
     limit: u32,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<Vec<AtsRecord>> {
     if limit == 0 {
@@ -447,7 +462,7 @@ pub async fn build_account_ats(
         .map(|id| {
             let api = api.clone();
             let at_tip = at_tip.clone();
-            async move { build_ats_record(&api, &at_tip, id, ss58_prefix).await }
+            async move { build_ats_record(&api, &at_tip, id, network_id, ss58_prefix).await }
         })
         .buffered(ATS_CONCURRENCY)
         .try_collect()
@@ -458,8 +473,9 @@ pub async fn build_account_ats(
 /// Aggregate stats over the full registry. Walks every live ATS entry to
 /// build totals — fine for dev chains, memoized in Phase 7.
 pub async fn build_ats_stats(
-    api: &crate::data::rpc::client::AllfeatClient,
+    api: &crate::data::rpc::client::SubxtClient,
     at_tip: &OnlineClientAtBlock<SubstrateConfig>,
+    network_id: &str,
     ss58_prefix: u16,
 ) -> DataResult<AtsStats> {
     let now_ms = fetch_timestamp(at_tip).await?;
@@ -484,7 +500,7 @@ pub async fn build_ats_stats(
         // Walk the whole registry in parallel — stats are the hottest of the
         // ATS pages, and the aggregation below is pure-CPU so we can feed it
         // as fast as the buffered stream yields results.
-        let mut stream = fan_out_ats_records(api, at_tip, next, ss58_prefix);
+        let mut stream = fan_out_ats_records(api, at_tip, next, network_id, ss58_prefix);
         while let Some(rec) = stream.next().await.transpose()? {
             let Some(rec) = rec else {
                 continue;

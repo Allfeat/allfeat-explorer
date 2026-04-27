@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allfeat_explorer::data::rpc::RpcClient;
+use allfeat_explorer::network::RuntimeKind;
 use allfeat_explorer::indexer::live::LiveWorker;
 use allfeat_explorer::indexer::sink;
 
@@ -40,7 +41,7 @@ async fn indexes_new_finalized_block() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), TEST_NETWORK, 42, RuntimeKind::Allfeat));
     let handle = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -102,7 +103,7 @@ async fn resumes_from_cursor_after_restart() {
     // First worker: index at least one block, then shut it down.
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), TEST_NETWORK, 42, RuntimeKind::Allfeat));
     let first = LiveWorker::new(
         TEST_NETWORK,
         sid,

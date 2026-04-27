@@ -77,6 +77,7 @@ type Row = (
 /// envelope should go through [`list_transfers_page`].
 pub async fn latest_transfers(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     count: u32,
     ss58_prefix: u16,
@@ -103,7 +104,7 @@ pub async fn latest_transfers(
         })?;
     Ok(rows
         .into_iter()
-        .filter_map(|row| row_to_transfer(row, ss58_prefix))
+        .filter_map(|row| row_to_transfer(row, network_id, ss58_prefix))
         .collect())
 }
 
@@ -120,12 +121,22 @@ pub async fn latest_transfers(
 /// selective.
 pub async fn list_transfers_page(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     req: &PageRequest,
     filters: &TransferFilters,
     ss58_prefix: u16,
 ) -> DataResult<Page<Transfer>> {
-    list_transfers_page_bounded(pool, network_sid, req, None, filters, ss58_prefix).await
+    list_transfers_page_bounded(
+        pool,
+        network_id,
+        network_sid,
+        req,
+        None,
+        filters,
+        ss58_prefix,
+    )
+    .await
 }
 
 /// Variant used by [`IndexedProvider`] when pending-tip rows were peeled
@@ -133,6 +144,7 @@ pub async fn list_transfers_page(
 /// may return.
 pub async fn list_transfers_page_bounded(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     req: &PageRequest,
     strict_upper: Option<(u64, u32)>,
@@ -215,7 +227,7 @@ pub async fn list_transfers_page_bounded(
         .filter_map(|row| {
             let block = row.0.max(0) as u64;
             let event_idx = row.1.max(0) as u32;
-            row_to_transfer(row, ss58_prefix).map(|t| (t, block, event_idx))
+            row_to_transfer(row, network_id, ss58_prefix).map(|t| (t, block, event_idx))
         })
         .collect();
     let has_more = probed.len() > req.count as usize;
@@ -249,6 +261,7 @@ pub async fn list_transfers_page_bounded(
 /// `m.account = $2` to take advantage of `balance_movements_account_idx`.
 pub async fn account_transfer_history(
     pool: &PgPool,
+    network_id: &str,
     network_sid: i16,
     account: &[u8; 32],
     count: u32,
@@ -275,7 +288,7 @@ pub async fn account_transfer_history(
         .map_err(|e| DataError::Rpc(format!("account_transfer_history(net={network_sid}): {e}")))?;
     Ok(rows
         .into_iter()
-        .filter_map(|row| row_to_transfer(row, ss58_prefix))
+        .filter_map(|row| row_to_transfer(row, network_id, ss58_prefix))
         .collect())
 }
 
@@ -284,7 +297,7 @@ pub async fn account_transfer_history(
 /// numeric, missing counterparty) — the caller filters those out rather
 /// than failing the whole feed; a corrupted row shouldn't blank out an
 /// otherwise-healthy list.
-fn row_to_transfer(row: Row, ss58_prefix: u16) -> Option<Transfer> {
+fn row_to_transfer(row: Row, network_id: &str, ss58_prefix: u16) -> Option<Transfer> {
     let (
         block_num,
         event_idx,
@@ -332,7 +345,7 @@ fn row_to_transfer(row: Row, ss58_prefix: u16) -> Option<Transfer> {
     let tip = tip_text.and_then(|s| s.parse::<u128>().ok()).unwrap_or(0);
     let fee = fee_text.parse::<u128>().unwrap_or(0);
 
-    let args = decode_call_args(&pallet, &call, &args_scale, ss58_prefix);
+    let args = decode_call_args(network_id, &pallet, &call, &args_scale, ss58_prefix);
 
     let extrinsic = Extrinsic {
         id: format!("{block}-{xt_index}"),

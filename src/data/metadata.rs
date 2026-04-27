@@ -1,4 +1,4 @@
-//! Static runtime metadata and a dynamic event-field decoder.
+//! Per-network static runtime metadata and dynamic event/call decoders.
 //!
 //! The event projection stores `data_scale` (raw field bytes) rather
 //! than a pre-decoded JSON blob — see
@@ -11,13 +11,13 @@
 //! 2. `scale_value::scale::decode_as_fields` to walk the bytes into a
 //!    `Composite<TypeId>`.
 //!
-//! The metadata is loaded once from `artifacts/allfeat-metadata.scale`
-//! (same blob the `#[subxt::subxt]` macro consumes at compile time) and
-//! kept behind a [`LazyLock`] — it's effectively const data from the
-//! binary's point of view, so a static avoids threading it through
-//! every read. If the live chain upgrades to a spec that changes an
-//! event variant, regenerate the blob and rebuild; we don't yet
-//! multiplex decoders by `spec_version`.
+//! Each supported runtime ships its own metadata blob (see
+//! [`ALLFEAT_RUNTIME`] and [`MELODIE_RUNTIME`]) — same files the
+//! `#[subxt::subxt]` macros consume at compile time. The decoded
+//! [`subxt::Metadata`] is kept behind a [`LazyLock`] per runtime so the
+//! decode cost is paid at most once per process per network, on first
+//! read. Callers reach the right blob through [`runtime_for`], passing
+//! the `network_id` they already have on hand.
 
 use std::sync::LazyLock;
 
@@ -26,8 +26,8 @@ use subxt::Metadata;
 // The SCALE-decoding helpers below exist only on the non-mock (RPC /
 // indexed) code paths — they lean on `data::rpc::mappers` and `data::ss58`,
 // both gated to `not(mock)`. The top-level metadata surface
-// (`METADATA_VERSION`, `callable_pallet_names`) is pure-reads of the
-// compile-time blob and stays available in every build so the frontend's
+// (`metadata_version_for`, `callable_pallet_names`) is pure-reads of the
+// compile-time blobs and stays available in every build so the frontend's
 // runtime-identity tile and pallet-filter dropdown don't care which
 // backend feeds them.
 #[cfg(not(feature = "mock"))]
@@ -37,41 +37,86 @@ use subxt::ext::{scale_decode, scale_value};
 use crate::data::rpc::mappers::hex_bytes;
 #[cfg(not(feature = "mock"))]
 use crate::domain::{CallField, EventField, ExtrinsicArgs};
+use crate::network::{by_id_or_default, RuntimeKind};
 
-/// Compile-time metadata blob for the Allfeat runtime. Same file the
-/// generated `runtime_types` module is built from, so decoding here
-/// and static binding in [`crate::data::rpc::runtime::allfeat`] stay
-/// in lockstep.
+/// Compile-time metadata blob for the Allfeat mainnet runtime. Same file
+/// the generated `runtime_types` module is built from, so decoding here
+/// and static binding in [`crate::data::rpc::runtime::allfeat`] stay in
+/// lockstep.
 const ALLFEAT_METADATA_BLOB: &[u8] = include_bytes!("../../artifacts/allfeat-metadata.scale");
 
-/// Public re-export of the raw SCALE-encoded metadata bytes. Feeds the
-/// `/api/v1/networks/{id}/runtime/metadata` download endpoint so the
-/// frontend's "Raw metadata" button returns the exact same artifact
-/// the server's decoders consume — guarantees what the user downloads
-/// matches what the explorer renders.
-pub const METADATA_BYTES: &[u8] = ALLFEAT_METADATA_BLOB;
+/// Compile-time metadata blob for the Melodie testnet runtime. Pairs
+/// with [`crate::data::rpc::runtime::melodie`].
+const MELODIE_METADATA_BLOB: &[u8] = include_bytes!("../../artifacts/melodie-metadata.scale");
 
-/// Decoded runtime metadata, shared across every call to
-/// [`decode_event_fields`]. Initialised on first access — cheap enough
-/// (a few hundred μs for ~120 KiB of SCALE) that we don't need to pay
-/// the cost at boot.
-pub static ALLFEAT_METADATA: LazyLock<Metadata> = LazyLock::new(|| {
+/// Per-runtime bundle: the raw SCALE bytes (for the
+/// `/api/v1/networks/{id}/runtime/metadata` download endpoint), the
+/// declared metadata version (for the runtime-identity tile), and a
+/// lazy [`Metadata`] for SCALE decoding.
+///
+/// Uses a `fn()` initialiser rather than a closure so the type stays
+/// `LazyLock<Metadata>` (the default `F = fn() -> T`) and can live in a
+/// `static`.
+pub struct RuntimeMetadata {
+    pub bytes: &'static [u8],
+    pub version: u8,
+    pub decoded: LazyLock<Metadata>,
+}
+
+fn decode_allfeat_metadata() -> Metadata {
     Metadata::decode_from(ALLFEAT_METADATA_BLOB).expect("allfeat metadata decodes")
-});
+}
 
-/// Runtime metadata version baked into [`ALLFEAT_METADATA_BLOB`]. Read
-/// directly off the SCALE prefix: the file is a
+fn decode_melodie_metadata() -> Metadata {
+    Metadata::decode_from(MELODIE_METADATA_BLOB).expect("melodie metadata decodes")
+}
+
+pub static ALLFEAT_RUNTIME: RuntimeMetadata = RuntimeMetadata {
+    bytes: ALLFEAT_METADATA_BLOB,
+    version: detect_metadata_version(ALLFEAT_METADATA_BLOB),
+    decoded: LazyLock::new(decode_allfeat_metadata),
+};
+
+pub static MELODIE_RUNTIME: RuntimeMetadata = RuntimeMetadata {
+    bytes: MELODIE_METADATA_BLOB,
+    version: detect_metadata_version(MELODIE_METADATA_BLOB),
+    decoded: LazyLock::new(decode_melodie_metadata),
+};
+
+/// Resolve the metadata bundle for a network by id. Falls back to the
+/// default network's bundle if `network_id` doesn't match a known spec —
+/// matches `crate::network::by_id_or_default`'s contract so the rest of
+/// the read path stays total.
+pub fn runtime_for(network_id: &str) -> &'static RuntimeMetadata {
+    match by_id_or_default(network_id).runtime_kind {
+        RuntimeKind::Allfeat => &ALLFEAT_RUNTIME,
+        RuntimeKind::Melodie => &MELODIE_RUNTIME,
+    }
+}
+
+/// Raw SCALE-encoded metadata bytes for `network_id`. Feeds the
+/// `/api/v1/networks/{id}/runtime/metadata` download so the frontend's
+/// "Raw metadata" button returns the exact same artifact the server's
+/// decoders consume — guarantees what the user downloads matches what
+/// the explorer renders.
+pub fn metadata_bytes_for(network_id: &str) -> &'static [u8] {
+    runtime_for(network_id).bytes
+}
+
+/// Runtime metadata version declared by the SCALE prefix of the bundled
+/// blob for `network_id`. Exposed via `/api/v1/networks/{id}/runtime` so
+/// the runtime page doesn't have to hardcode `"V15"`.
+pub fn metadata_version_for(network_id: &str) -> u8 {
+    runtime_for(network_id).version
+}
+
+/// Read directly off the SCALE prefix: the file is a
 /// `frame_metadata::RuntimeMetadataPrefixed` whose first four bytes are
 /// the magic `"meta"` and whose fifth byte is the SCALE variant index
 /// of the inner `RuntimeMetadata` enum — V0 → 0, … V14 → 14, V15 → 15,
-/// V16 → 16.
-///
-/// Exposed to the frontend via `/api/v1/networks/{id}/runtime` so the
-/// runtime page doesn't have to hardcode `"V15"`. Subxt's `Metadata`
-/// type collapses V14/V15/V16 into a single decoded shape, so we can't
-/// recover the version number from there after `decode_from`.
-pub const METADATA_VERSION: u8 = detect_metadata_version(ALLFEAT_METADATA_BLOB);
-
+/// V16 → 16. Subxt's `Metadata` type collapses V14/V15/V16 into a single
+/// decoded shape, so we can't recover the version number from there
+/// after `decode_from`.
 const fn detect_metadata_version(blob: &[u8]) -> u8 {
     // Prefix: `"meta" || variant_index (1 byte) || payload`. A blob that
     // doesn't match the magic isn't consumable anyway (subxt's decode
@@ -83,14 +128,15 @@ const fn detect_metadata_version(blob: &[u8]) -> u8 {
     blob[4]
 }
 
-/// All pallet names in the runtime that expose at least one callable
-/// extrinsic, returned in metadata-declaration order. The UI's
+/// All pallet names in `network_id`'s runtime that expose at least one
+/// callable extrinsic, returned in metadata-declaration order. The UI's
 /// extrinsics filter dropdown reads this to stay in lockstep with the
 /// `extrinsics.pallet` column the indexer writes — filtering pallets
 /// without `call_variants()` would just show an empty page, and
 /// including them would mislead the user.
-pub fn callable_pallet_names() -> Vec<String> {
-    ALLFEAT_METADATA
+pub fn callable_pallet_names(network_id: &str) -> Vec<String> {
+    runtime_for(network_id)
+        .decoded
         .pallets()
         .filter_map(|p| {
             let has_calls = p.call_variants().map(|v| !v.is_empty()).unwrap_or(false);
@@ -100,7 +146,7 @@ pub fn callable_pallet_names() -> Vec<String> {
 }
 
 /// Decode the raw field bytes of an event into a list of
-/// `(name?, value)` pairs using the static metadata.
+/// `(name?, value)` pairs using the static metadata for `network_id`.
 ///
 /// Returns an empty vec on any lookup or decode failure — callers
 /// surface "no decoded fields" the same way they already surface
@@ -109,12 +155,13 @@ pub fn callable_pallet_names() -> Vec<String> {
 /// the whole extrinsic read.
 #[cfg(not(feature = "mock"))]
 pub fn decode_event_fields(
+    network_id: &str,
     pallet_name: &str,
     variant_name: &str,
     data: &[u8],
     ss58_prefix: u16,
 ) -> Vec<EventField> {
-    let metadata = &*ALLFEAT_METADATA;
+    let metadata = &*runtime_for(network_id).decoded;
     let Some(pallet) = metadata.pallet_by_name(pallet_name) else {
         return Vec::new();
     };
@@ -158,7 +205,7 @@ pub fn decode_event_fields(
 
 /// Decode the SCALE-encoded `call_data_bytes()` shape subxt produces —
 /// `[pallet_idx, call_idx, …field_bytes]` — into the domain
-/// [`ExtrinsicArgs`] variants.
+/// [`ExtrinsicArgs`] variants, using `network_id`'s runtime metadata.
 ///
 /// Both pipes into this function carry the 2-byte pallet/call prefix:
 ///
@@ -174,6 +221,7 @@ pub fn decode_event_fields(
 /// Parameters tab still shows something.
 #[cfg(not(feature = "mock"))]
 pub fn decode_call_args(
+    network_id: &str,
     pallet_name: &str,
     call_name: &str,
     data: &[u8],
@@ -188,7 +236,7 @@ pub fn decode_call_args(
     let Some(args_only) = data.get(2..) else {
         return raw();
     };
-    let fields = decode_call_fields(pallet_name, call_name, args_only, ss58_prefix);
+    let fields = decode_call_fields(network_id, pallet_name, call_name, args_only, ss58_prefix);
     if fields.is_empty() && !args_only.is_empty() {
         raw()
     } else {
@@ -198,9 +246,10 @@ pub fn decode_call_args(
 
 /// Decode the field-level bytes of an extrinsic call (the portion
 /// *after* the 2-byte pallet/call prefix) into a list of
-/// `(name?, type_name?, value)` tuples. Mirrors [`decode_event_fields`]
-/// — the only structural difference is `call_variant_by_name` instead
-/// of walking event variants.
+/// `(name?, type_name?, value)` tuples, using `network_id`'s runtime
+/// metadata. Mirrors [`decode_event_fields`] — the only structural
+/// difference is `call_variant_by_name` instead of walking event
+/// variants.
 ///
 /// Returns an empty vec on any lookup or decode failure so the caller
 /// can fall back uniformly to [`ExtrinsicArgs::Raw`]. Callers that
@@ -208,12 +257,13 @@ pub fn decode_call_args(
 /// [`decode_call_args`] instead.
 #[cfg(not(feature = "mock"))]
 pub fn decode_call_fields(
+    network_id: &str,
     pallet_name: &str,
     call_name: &str,
     data: &[u8],
     ss58_prefix: u16,
 ) -> Vec<CallField> {
-    let metadata = &*ALLFEAT_METADATA;
+    let metadata = &*runtime_for(network_id).decoded;
     let Some(pallet) = metadata.pallet_by_name(pallet_name) else {
         return Vec::new();
     };
@@ -343,29 +393,50 @@ fn try_extract_32_bytes(value: &scale_value::Value<u32>) -> Option<[u8; 32]> {
 mod tests {
     use super::*;
 
-    /// The metadata blob ships with the binary — loading it can't
+    /// Both bundled blobs ship with the binary — loading them can't
     /// fail, and the hit path depends on this being a valid
-    /// `Metadata`. Forces the `LazyLock` init and sanity-checks a
-    /// known pallet is present so a broken artifact fails this test
-    /// instead of a pallet-specific query far downstream.
+    /// `Metadata`. Forces the `LazyLock` init for both runtimes and
+    /// sanity-checks a couple of common pallets are present, so a
+    /// broken artifact fails this test instead of a pallet-specific
+    /// query far downstream.
     #[test]
-    fn metadata_loads_and_resolves_system_pallet() {
-        let md = &*ALLFEAT_METADATA;
-        assert!(md.pallet_by_name("System").is_some());
+    fn both_runtimes_load_and_resolve_common_pallets() {
+        let allfeat = &*ALLFEAT_RUNTIME.decoded;
+        assert!(allfeat.pallet_by_name("System").is_some());
+        assert!(allfeat.pallet_by_name("Balances").is_some());
+
+        let melodie = &*MELODIE_RUNTIME.decoded;
+        assert!(melodie.pallet_by_name("System").is_some());
+        assert!(melodie.pallet_by_name("Balances").is_some());
     }
 
     /// Every supported runtime metadata version (V14, V15, V16) is a
     /// valid decode target for subxt; the detector must report one of
-    /// those three so the frontend's tile doesn't render "V0" when the
-    /// artifact is swapped. The exact number is deployment-specific —
-    /// locking to "current" rather than a literal keeps the test stable
-    /// when the bundled blob is regenerated against a newer runtime.
+    /// those three for each bundled blob so the frontend's tile doesn't
+    /// render "V0" when the artifact is swapped. The exact number is
+    /// deployment-specific — locking to the supported range rather than
+    /// a literal keeps the test stable when the bundled blobs are
+    /// regenerated against newer runtimes.
     #[test]
-    fn metadata_version_is_a_supported_variant() {
-        assert!(
-            (14..=16).contains(&METADATA_VERSION),
-            "metadata version {METADATA_VERSION} outside the subxt-supported 14..=16 range"
-        );
+    fn metadata_versions_are_supported_variants() {
+        for (id, version) in [
+            ("allfeat", ALLFEAT_RUNTIME.version),
+            ("melodie", MELODIE_RUNTIME.version),
+        ] {
+            assert!(
+                (14..=16).contains(&version),
+                "metadata version {version} for {id} outside the subxt-supported 14..=16 range",
+            );
+        }
+    }
+
+    /// `runtime_for` must dispatch each id to its own bundle — a
+    /// regression here would silently route every Melodie decode through
+    /// the Allfeat blob (and vice versa) and corrupt every pallet read.
+    #[test]
+    fn runtime_for_dispatches_per_network() {
+        assert!(std::ptr::eq(runtime_for("allfeat"), &ALLFEAT_RUNTIME));
+        assert!(std::ptr::eq(runtime_for("melodie"), &MELODIE_RUNTIME));
     }
 
     /// Decoding against an unknown pallet/variant is a no-op — the
@@ -374,7 +445,7 @@ mod tests {
     #[cfg(not(feature = "mock"))]
     #[test]
     fn decode_unknown_pallet_returns_empty() {
-        let fields = decode_event_fields("NotAPallet", "Whatever", &[], 42);
+        let fields = decode_event_fields("allfeat", "NotAPallet", "Whatever", &[], 42);
         assert!(fields.is_empty());
     }
 
@@ -384,7 +455,7 @@ mod tests {
     #[cfg(not(feature = "mock"))]
     #[test]
     fn decode_malformed_bytes_returns_empty() {
-        let fields = decode_event_fields("System", "ExtrinsicSuccess", &[0xff], 42);
+        let fields = decode_event_fields("allfeat", "System", "ExtrinsicSuccess", &[0xff], 42);
         assert!(fields.is_empty());
     }
 
@@ -392,18 +463,21 @@ mod tests {
     /// non-empty and matches pallets that actually emit extrinsics —
     /// `System` and `Balances` are ubiquitous on Substrate runtimes and
     /// both expose callable extrinsics, so a missing entry would flag a
-    /// bad metadata blob.
+    /// bad metadata blob. Checks both runtimes since the dropdown
+    /// surfaces the per-network catalogue.
     #[test]
-    fn callable_pallet_names_lists_system_and_balances() {
-        let names = callable_pallet_names();
-        assert!(
-            names.iter().any(|n| n == "System"),
-            "System missing; got {names:?}"
-        );
-        assert!(
-            names.iter().any(|n| n == "Balances"),
-            "Balances missing; got {names:?}"
-        );
+    fn callable_pallet_names_lists_system_and_balances_per_runtime() {
+        for id in ["allfeat", "melodie"] {
+            let names = callable_pallet_names(id);
+            assert!(
+                names.iter().any(|n| n == "System"),
+                "[{id}] System missing; got {names:?}",
+            );
+            assert!(
+                names.iter().any(|n| n == "Balances"),
+                "[{id}] Balances missing; got {names:?}",
+            );
+        }
     }
 
     /// A known call (`Timestamp.set`) decodes into a single `now`
@@ -418,7 +492,7 @@ mod tests {
         use subxt::ext::codec::{Compact, Encode};
         let now: u64 = 1_700_000_000_000;
         let bytes = Compact(now).encode();
-        let fields = decode_call_fields("Timestamp", "set", &bytes, 42);
+        let fields = decode_call_fields("allfeat", "Timestamp", "set", &bytes, 42);
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].name.as_deref(), Some("now"));
         let parsed: u64 = fields[0]
@@ -435,7 +509,7 @@ mod tests {
     #[cfg(not(feature = "mock"))]
     #[test]
     fn decode_call_fields_unknown_call_returns_empty() {
-        let fields = decode_call_fields("Balances", "not_a_call", &[], 42);
+        let fields = decode_call_fields("allfeat", "Balances", "not_a_call", &[], 42);
         assert!(fields.is_empty());
     }
 
@@ -445,7 +519,7 @@ mod tests {
     #[cfg(not(feature = "mock"))]
     #[test]
     fn decode_call_fields_malformed_bytes_returns_empty() {
-        let fields = decode_call_fields("Timestamp", "set", &[0xff], 42);
+        let fields = decode_call_fields("allfeat", "Timestamp", "set", &[0xff], 42);
         assert!(fields.is_empty());
     }
 
@@ -464,7 +538,7 @@ mod tests {
         // variant. Any two bytes work because we look up by name.
         let mut bytes = vec![0x02, 0x00];
         bytes.extend_from_slice(&Compact(now).encode());
-        match decode_call_args("Timestamp", "set", &bytes, 42) {
+        match decode_call_args("allfeat", "Timestamp", "set", &bytes, 42) {
             ExtrinsicArgs::Decoded { fields } => {
                 assert_eq!(fields.len(), 1);
                 assert_eq!(fields[0].name.as_deref(), Some("now"));
@@ -482,7 +556,7 @@ mod tests {
     #[cfg(not(feature = "mock"))]
     #[test]
     fn decode_call_args_short_buffer_falls_back_to_raw() {
-        match decode_call_args("Timestamp", "set", &[0xff], 42) {
+        match decode_call_args("allfeat", "Timestamp", "set", &[0xff], 42) {
             ExtrinsicArgs::Raw { hex } => assert_eq!(hex, "0xff"),
             other => panic!("expected Raw, got {other:?}"),
         }
@@ -508,7 +582,7 @@ mod tests {
         let bytes = from_hex(
             "0x05030056d264f360418e53f860338a37b8d42a28a10a347b1c96cbd6f62964ec92c21907bb39f9c601",
         );
-        match decode_call_args("Balances", "transfer_allow_death", &bytes, 42) {
+        match decode_call_args("allfeat", "Balances", "transfer_allow_death", &bytes, 42) {
             ExtrinsicArgs::Decoded { fields } => {
                 let dest = fields
                     .iter()

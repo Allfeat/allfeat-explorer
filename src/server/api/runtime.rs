@@ -143,9 +143,9 @@ pub async fn runtime_wasm(
 }
 
 /// Return the compile-time SCALE-encoded runtime metadata blob as
-/// `application/octet-stream`. The response is always the same for a
-/// given build — we ship one metadata artifact per deployment and
-/// every supported network decodes against it. No `?at=` support:
+/// `application/octet-stream`. Each network ships its own bundled blob
+/// (Allfeat / Melodie); the handler resolves the right one through
+/// [`crate::data::metadata::metadata_bytes_for`]. No `?at=` support:
 /// historical metadata would require per-spec blobs the indexer
 /// hasn't captured yet (`runtime_versions` table exists in the schema
 /// but is unpopulated).
@@ -154,7 +154,7 @@ pub async fn runtime_metadata(
     Path(network_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let _ctx = ctx_for(&network_id)?;
-    let blob: &'static [u8] = crate::data::metadata::METADATA_BYTES;
+    let blob: &'static [u8] = crate::data::metadata::metadata_bytes_for(&network_id);
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,

@@ -42,7 +42,7 @@ use allfeat_explorer::data::ChainData;
 use allfeat_explorer::domain::PageRequest;
 use allfeat_explorer::indexer::live::LiveWorker;
 use allfeat_explorer::indexer::sink;
-use allfeat_explorer::network::{ChainCtx, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
 use subxt::utils::{AccountId32, MultiAddress};
 use subxt_signer::sr25519::{dev, Keypair};
 use subxt_signer::SecretUri;
@@ -223,7 +223,7 @@ async fn registry_matches_rpc_scan() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -326,7 +326,7 @@ async fn version_feed_pagination() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -491,7 +491,7 @@ async fn stats_counters_consistent() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,

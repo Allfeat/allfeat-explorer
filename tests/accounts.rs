@@ -41,7 +41,7 @@ use allfeat_explorer::data::rpc::{RpcClient, RpcProvider};
 use allfeat_explorer::data::ChainData;
 use allfeat_explorer::indexer::live::LiveWorker;
 use allfeat_explorer::indexer::sink;
-use allfeat_explorer::network::{ChainCtx, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
 use subxt::utils::{AccountId32, MultiAddress};
 use subxt_signer::sr25519::{dev, Keypair};
 use subxt_signer::SecretUri;
@@ -147,7 +147,7 @@ async fn balance_matches_system_account() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -236,7 +236,7 @@ async fn signer_balance_matches_after_fee() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -337,7 +337,7 @@ async fn top_accounts_ordered() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -439,7 +439,7 @@ async fn nonce_advances_on_signed_extrinsic() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), 42));
+    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,

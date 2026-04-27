@@ -21,7 +21,7 @@ use allfeat_explorer::data::filters::{
 use allfeat_explorer::data::rpc::{RpcClient, RpcProvider};
 use allfeat_explorer::data::ChainData;
 use allfeat_explorer::domain::PageRequest;
-use allfeat_explorer::network::{ChainCtx, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
 
 fn endpoint() -> String {
     std::env::var("ALLFEAT_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string())
@@ -32,7 +32,7 @@ fn endpoint() -> String {
 /// the test surface mirrors how `AppState::from_config` wires the real server.
 fn melodie_provider() -> RpcProvider {
     let mut clients: HashMap<&'static str, Arc<RpcClient>> = HashMap::new();
-    clients.insert(MELODIE.id, Arc::new(RpcClient::new(endpoint(), 42)));
+    clients.insert(MELODIE.id, Arc::new(RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat)));
     RpcProvider::new(clients)
 }
 
@@ -47,7 +47,7 @@ fn melodie_ctx() -> ChainCtx {
 #[tokio::test]
 #[ignore]
 async fn live_connect_and_fetch_genesis() {
-    let client = RpcClient::new(endpoint(), 42);
+    let client = RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
     let api = client
         .subxt()
         .await
@@ -67,7 +67,7 @@ async fn live_connect_and_fetch_genesis() {
 #[tokio::test]
 #[ignore]
 async fn live_latest_block_fetches() {
-    let client = RpcClient::new(endpoint(), 42);
+    let client = RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
     let api = client.subxt().await.expect("connect to dev node");
 
     let at = api
@@ -379,7 +379,7 @@ async fn live_alice_to_bob_transfer_shows_up() {
     use allfeat_explorer::data::rpc::runtime::allfeat;
     use subxt_signer::sr25519::dev;
 
-    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), 42);
+    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
     let api = client.subxt().await.expect("connect to dev node");
 
     let amount: u128 = 1_234_567_890_000;
@@ -473,7 +473,7 @@ async fn live_alice_ats_create_and_update() {
 
     let provider = melodie_provider();
     let ctx = melodie_ctx();
-    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), 42);
+    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
     let api = client.subxt().await.expect("connect to dev node");
 
     // Commitment / protocol_version unique per run so if the test is executed
@@ -727,7 +727,7 @@ async fn live_block_by_number_hits_finalized_cache_on_second_call() {
     // then a populated one.
     let provider = melodie_provider();
     // Prime subxt on the fresh provider too (connection handshake is shared
-    // across tests via `AllfeatClient::from_url`; giving this provider a
+    // across tests via `SubxtClient::from_url`; giving this provider a
     // chance to open its own client makes the "miss" call a pure cache
     // lookup + one RPC, not a connection cost).
     provider
@@ -768,7 +768,7 @@ async fn live_block_by_number_hits_finalized_cache_on_second_call() {
 
 /// 50 concurrent callers asking for the same finalized block must collapse
 /// to a single underlying RPC thanks to `try_get_with`'s singleflight. We
-/// can't cleanly count RPC calls on a real `AllfeatClient`, so we rely on
+/// can't cleanly count RPC calls on a real `SubxtClient`, so we rely on
 /// the cumulative wall-clock: 50 sequential RPCs would take orders of
 /// magnitude longer than 50 coalesced ones.
 #[tokio::test]
@@ -822,7 +822,7 @@ async fn live_block_by_number_coalesces_concurrent_misses() {
 async fn live_finalized_head_subscription_publishes() {
     use std::time::{Duration, Instant};
 
-    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), 42);
+    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
     // Trigger connect → spawns the subscription task as a side effect.
     let _ = client.subxt().await.expect("connect to dev node");
 
@@ -858,7 +858,7 @@ async fn live_finalized_head_subscription_publishes() {
 async fn live_invalidate_clears_finalized_head_watch() {
     use std::time::{Duration, Instant};
 
-    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), 42);
+    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
     let _ = client.subxt().await.expect("connect to dev node");
 
     // Wait for the first notification so the watch is populated.

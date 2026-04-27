@@ -119,7 +119,12 @@ impl AppState {
                 if let Some(url) = config.rpc_endpoints.get(net.id) {
                     clients.insert(
                         net.id,
-                        Arc::new(RpcClient::new(url.clone(), net.ss58_prefix)),
+                        Arc::new(RpcClient::new(
+                            url.clone(),
+                            net.id,
+                            net.ss58_prefix,
+                            net.runtime_kind,
+                        )),
                     );
                     indexed_ids.push(net.id);
                 }
