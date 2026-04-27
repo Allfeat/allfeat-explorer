@@ -41,21 +41,21 @@ use allfeat_explorer::data::rpc::{RpcClient, RpcProvider};
 use allfeat_explorer::data::ChainData;
 use allfeat_explorer::indexer::live::LiveWorker;
 use allfeat_explorer::indexer::sink;
-use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, ALLFEAT};
 use subxt::utils::{AccountId32, MultiAddress};
 use subxt_signer::sr25519::{dev, Keypair};
 use subxt_signer::SecretUri;
 
 use common::{dev_node_url, fresh_db, fresh_lookups, lookup_cell, wait_for_cursor, TEST_NETWORK};
 
-fn melodie_rpc_provider(client: Arc<RpcClient>) -> RpcProvider {
+fn allfeat_rpc_provider(client: Arc<RpcClient>) -> RpcProvider {
     let mut clients: HashMap<&'static str, Arc<RpcClient>> = HashMap::new();
-    clients.insert(MELODIE.id, client);
+    clients.insert(ALLFEAT.id, client);
     RpcProvider::new(clients)
 }
 
-fn melodie_ctx() -> ChainCtx {
-    ChainCtx::new(&MELODIE, 0)
+fn allfeat_ctx() -> ChainCtx {
+    ChainCtx::new(&ALLFEAT, 0)
 }
 
 /// Derive a fresh (non-genesis) keypair from a dev-style URI. The URIs
@@ -147,7 +147,7 @@ async fn balance_matches_system_account() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -175,17 +175,17 @@ async fn balance_matches_system_account() {
     let block_num = submit_signed(&api, &dev::alice(), tx).await;
     wait_for_cursor(&pool, sink::LIVE_CURSOR, block_num, Duration::from_secs(30)).await;
 
-    let rpc_provider = Arc::new(melodie_rpc_provider(client.clone()));
+    let rpc_provider = Arc::new(allfeat_rpc_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc_provider,
         lookup_cell(networks.clone()),
     );
 
     let recipient_ss58 = recipient_account.to_string();
     let db_account = provider
-        .account_by_address(melodie_ctx(), &recipient_ss58)
+        .account_by_address(allfeat_ctx(), &recipient_ss58)
         .await
         .expect("account_by_address succeeds")
         .expect("recipient must exist after the transfer");
@@ -236,7 +236,7 @@ async fn signer_balance_matches_after_fee() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -284,16 +284,16 @@ async fn signer_balance_matches_after_fee() {
     )
     .await;
 
-    let rpc_provider = Arc::new(melodie_rpc_provider(client.clone()));
+    let rpc_provider = Arc::new(allfeat_rpc_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc_provider,
         lookup_cell(networks.clone()),
     );
     let signer_ss58 = signer_account.to_string();
     let db_account = provider
-        .account_by_address(melodie_ctx(), &signer_ss58)
+        .account_by_address(allfeat_ctx(), &signer_ss58)
         .await
         .expect("account_by_address succeeds")
         .expect("signer row exists after signed extrinsic");
@@ -337,7 +337,7 @@ async fn top_accounts_ordered() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -378,10 +378,10 @@ async fn top_accounts_ordered() {
     )
     .await;
 
-    let rpc_provider = Arc::new(melodie_rpc_provider(client.clone()));
+    let rpc_provider = Arc::new(allfeat_rpc_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc_provider,
         lookup_cell(networks.clone()),
     );
@@ -389,7 +389,7 @@ async fn top_accounts_ordered() {
     // Generous N — the worker may have indexed ambient activity (fee
     // movements, inherents, etc.) beyond our two fresh keys.
     let top = provider
-        .top_accounts(melodie_ctx(), 50)
+        .top_accounts(allfeat_ctx(), 50)
         .await
         .expect("top_accounts succeeds");
 
@@ -439,7 +439,7 @@ async fn nonce_advances_on_signed_extrinsic() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -486,17 +486,17 @@ async fn nonce_advances_on_signed_extrinsic() {
     )
     .await;
 
-    let rpc_provider = Arc::new(melodie_rpc_provider(client.clone()));
+    let rpc_provider = Arc::new(allfeat_rpc_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc_provider,
         lookup_cell(networks.clone()),
     );
 
     let fresh_ss58 = fresh_account.to_string();
     let db_account = provider
-        .account_by_address(melodie_ctx(), &fresh_ss58)
+        .account_by_address(allfeat_ctx(), &fresh_ss58)
         .await
         .expect("account_by_address succeeds")
         .expect("fresh signer row exists after signed extrinsic");

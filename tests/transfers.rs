@@ -39,7 +39,7 @@ use allfeat_explorer::data::ChainData;
 use allfeat_explorer::domain::{CallResult, Extrinsic, ExtrinsicArgs, Transfer};
 use allfeat_explorer::indexer::backfill::BackfillWorker;
 use allfeat_explorer::indexer::buffer::{shared, BufferedBlock};
-use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, ALLFEAT};
 use subxt::utils::AccountId32;
 
 use common::{
@@ -47,14 +47,14 @@ use common::{
     wait_for_finalized_head, TEST_NETWORK,
 };
 
-fn melodie_provider(client: Arc<RpcClient>) -> RpcProvider {
+fn allfeat_provider(client: Arc<RpcClient>) -> RpcProvider {
     let mut clients: HashMap<&'static str, Arc<RpcClient>> = HashMap::new();
-    clients.insert(MELODIE.id, client);
+    clients.insert(ALLFEAT.id, client);
     RpcProvider::new(clients)
 }
 
-fn melodie_ctx() -> ChainCtx {
-    ChainCtx::new(&MELODIE, 0)
+fn allfeat_ctx() -> ChainCtx {
+    ChainCtx::new(&ALLFEAT, 0)
 }
 
 /// Pull every Transfer balance_movement (sender side) from the
@@ -99,7 +99,7 @@ async fn sender_side_transfers(
 async fn history_for_known_account() {
     let db = fresh_db().await;
     let pool = db.pool().clone();
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     // 100 blocks is wide enough to catch a sporadic faucet drip without
@@ -155,10 +155,10 @@ async fn history_for_known_account() {
     counterparty_arr.copy_from_slice(&counterparty_bytes);
     let recipient_ss58 = AccountId32::from(counterparty_arr).to_string();
 
-    let rpc = Arc::new(melodie_provider(client.clone()));
+    let rpc = Arc::new(allfeat_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc,
         lookup_cell(networks.clone()),
     );
@@ -170,7 +170,7 @@ async fn history_for_known_account() {
     use allfeat_explorer::domain::PageRequest;
     let listed = provider
         .latest_transfers(
-            melodie_ctx(),
+            allfeat_ctx(),
             PageRequest {
                 count: span as u32 + 16,
                 cursor: None,
@@ -206,7 +206,7 @@ async fn live_stream_emits_on_new_block() {
     let db = fresh_db().await;
     let pool = db.pool().clone();
 
-    let buffer = shared(MELODIE.id);
+    let buffer = shared(ALLFEAT.id);
     // Subscribe BEFORE the append: a receiver attached afterwards
     // would never see the items (broadcast doesn't replay), and the
     // production path subscribes during HTTP boot — well ahead of
@@ -219,16 +219,16 @@ async fn live_stream_emits_on_new_block() {
     // Provider built around the shared buffer + a dummy RPC stack.
     // We never invoke RPC-only methods in this test, so the URL
     // doesn't have to be reachable.
-    let rpc_client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
-    let rpc = Arc::new(melodie_provider(rpc_client));
+    let rpc_client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
+    let rpc = Arc::new(allfeat_provider(rpc_client));
     let (networks, _author_lookup) = fresh_lookups(&pool).await;
     let _provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc,
         lookup_cell(networks.clone()),
     )
-    .with_buffer(MELODIE.id, buffer.clone());
+    .with_buffer(ALLFEAT.id, buffer.clone());
 
     let synthetic_extrinsic = Extrinsic {
         id: "999000-1".into(),

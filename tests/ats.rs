@@ -42,21 +42,21 @@ use allfeat_explorer::data::ChainData;
 use allfeat_explorer::domain::PageRequest;
 use allfeat_explorer::indexer::live::LiveWorker;
 use allfeat_explorer::indexer::sink;
-use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, ALLFEAT};
 use subxt::utils::{AccountId32, MultiAddress};
 use subxt_signer::sr25519::{dev, Keypair};
 use subxt_signer::SecretUri;
 
 use common::{dev_node_url, fresh_db, fresh_lookups, lookup_cell, wait_for_cursor, TEST_NETWORK};
 
-fn melodie_rpc_provider(client: Arc<RpcClient>) -> RpcProvider {
+fn allfeat_rpc_provider(client: Arc<RpcClient>) -> RpcProvider {
     let mut clients: HashMap<&'static str, Arc<RpcClient>> = HashMap::new();
-    clients.insert(MELODIE.id, client);
+    clients.insert(ALLFEAT.id, client);
     RpcProvider::new(clients)
 }
 
-fn melodie_ctx() -> ChainCtx {
-    ChainCtx::new(&MELODIE, 0)
+fn allfeat_ctx() -> ChainCtx {
+    ChainCtx::new(&ALLFEAT, 0)
 }
 
 /// Derive a fresh keypair from a dev-style URI. Unique across tests
@@ -187,7 +187,7 @@ async fn next_ats_id(client: &RpcClient) -> u64 {
         .at_current_block()
         .await
         .expect("at_current_block for next_ats_id");
-    allfeat_explorer::data::rpc::mappers::fetch_next_ats_id(&at)
+    allfeat_explorer::data::rpc::mappers::fetch_next_ats_id(&at, client.runtime_kind())
         .await
         .expect("fetch next_ats_id")
 }
@@ -223,7 +223,7 @@ async fn registry_matches_rpc_scan() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -268,10 +268,10 @@ async fn registry_matches_rpc_scan() {
     // positions stay correct as long as nothing gets revoked during
     // the test (we don't revoke anywhere).
     let post_next = next_ats_id(&client).await;
-    let rpc_provider = Arc::new(melodie_rpc_provider(client.clone()));
+    let rpc_provider = Arc::new(allfeat_rpc_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc_provider.clone(),
         lookup_cell(networks.clone()),
     );
@@ -279,12 +279,12 @@ async fn registry_matches_rpc_scan() {
     for (_, ats_id) in &created {
         let position = u32::try_from(post_next - 1 - *ats_id).expect("position fits u32");
         let db_rec = provider
-            .ats_by_index(melodie_ctx(), position)
+            .ats_by_index(allfeat_ctx(), position)
             .await
             .expect("ats_by_index succeeds")
             .unwrap_or_else(|| panic!("ats at position {position} (id {ats_id}) must be indexed"));
         let rpc_rec = rpc_provider
-            .ats_by_index(melodie_ctx(), position)
+            .ats_by_index(allfeat_ctx(), position)
             .await
             .expect("rpc ats_by_index succeeds")
             .unwrap_or_else(|| {
@@ -326,7 +326,7 @@ async fn version_feed_pagination() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -373,10 +373,10 @@ async fn version_feed_pagination() {
     )
     .await;
 
-    let rpc_provider = Arc::new(melodie_rpc_provider(client.clone()));
+    let rpc_provider = Arc::new(allfeat_rpc_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc_provider,
         lookup_cell(networks.clone()),
     );
@@ -391,7 +391,7 @@ async fn version_feed_pagination() {
 
     let full = provider
         .ats_version_feed(
-            melodie_ctx(),
+            allfeat_ctx(),
             PageRequest {
                 count: 64,
                 cursor: None,
@@ -418,7 +418,7 @@ async fn version_feed_pagination() {
     let page_size: u32 = 3;
     let page_a = provider
         .ats_version_feed(
-            melodie_ctx(),
+            allfeat_ctx(),
             PageRequest {
                 count: page_size,
                 cursor: None,
@@ -434,7 +434,7 @@ async fn version_feed_pagination() {
         .expect("page_a must have a next_cursor when more rows exist");
     let page_b = provider
         .ats_version_feed(
-            melodie_ctx(),
+            allfeat_ctx(),
             PageRequest {
                 count: page_size,
                 cursor: Some(page_b_cursor),
@@ -491,7 +491,7 @@ async fn stats_counters_consistent() {
 
     let (networks, author_lookup) = fresh_lookups(&pool).await;
     let sid = networks.resolve(TEST_NETWORK).expect("TEST_NETWORK seeded");
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let worker = LiveWorker::new(
         TEST_NETWORK,
         sid,
@@ -509,15 +509,15 @@ async fn stats_counters_consistent() {
     wait_for_cursor(&pool, sink::LIVE_CURSOR, funded, Duration::from_secs(30)).await;
 
     let before_stats = {
-        let rpc = Arc::new(melodie_rpc_provider(client.clone()));
+        let rpc = Arc::new(allfeat_rpc_provider(client.clone()));
         let provider = IndexedProvider::new(
             pool.clone(),
-            [MELODIE.id],
+            [ALLFEAT.id],
             rpc,
             lookup_cell(networks.clone()),
         );
         provider
-            .ats_stats(melodie_ctx())
+            .ats_stats(allfeat_ctx())
             .await
             .expect("stats before ok")
     };
@@ -539,15 +539,15 @@ async fn stats_counters_consistent() {
     )
     .await;
 
-    let rpc = Arc::new(melodie_rpc_provider(client.clone()));
+    let rpc = Arc::new(allfeat_rpc_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc,
         lookup_cell(networks.clone()),
     );
     let after_stats = provider
-        .ats_stats(melodie_ctx())
+        .ats_stats(allfeat_ctx())
         .await
         .expect("stats after ok");
 

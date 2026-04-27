@@ -37,26 +37,26 @@ use allfeat_explorer::data::ChainData;
 use allfeat_explorer::domain::{CallResult, Extrinsic, ExtrinsicArgs};
 use allfeat_explorer::indexer::backfill::BackfillWorker;
 use allfeat_explorer::indexer::buffer::{shared, BufferedBlock};
-use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, ALLFEAT};
 
 use common::{
     dev_node_url, fresh_db, fresh_lookups, lookup_cell, wait_for_chunk_status,
     wait_for_finalized_head, TEST_NETWORK,
 };
 
-/// Wire a Melodie-flavoured `RpcProvider` pointing at the dev node.
+/// Wire a Allfeat-flavoured `RpcProvider` pointing at the dev node.
 /// Mirrors the shape `AppState::from_config` builds in prod so the
 /// tests exercise the same routing surface.
-fn melodie_provider(client: Arc<RpcClient>) -> RpcProvider {
+fn allfeat_provider(client: Arc<RpcClient>) -> RpcProvider {
     let mut clients: HashMap<&'static str, Arc<RpcClient>> = HashMap::new();
-    clients.insert(MELODIE.id, client);
+    clients.insert(ALLFEAT.id, client);
     RpcProvider::new(clients)
 }
 
-fn melodie_ctx() -> ChainCtx {
+fn allfeat_ctx() -> ChainCtx {
     // DB-backed reads never consult `now_ms`; set it to 0 and let the
     // DB answer from the block's stored `timestamp_ms`.
-    ChainCtx::new(&MELODIE, 0)
+    ChainCtx::new(&ALLFEAT, 0)
 }
 
 /// Backfill a short range then look up one extrinsic by its raw hash.
@@ -67,7 +67,7 @@ fn melodie_ctx() -> ChainCtx {
 async fn lookup_by_hash_from_db() {
     let db = fresh_db().await;
     let pool = db.pool().clone();
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     // A ~10-block window is enough to find a `timestamp.set` inherent
@@ -119,10 +119,10 @@ async fn lookup_by_hash_from_db() {
 
     // Resolve via the provider using the 0x-prefixed hash string — same
     // shape the UI search bar passes into the server fn.
-    let rpc = Arc::new(melodie_provider(client.clone()));
+    let rpc = Arc::new(allfeat_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc,
         lookup_cell(networks.clone()),
     );
@@ -134,7 +134,7 @@ async fn lookup_by_hash_from_db() {
             .collect::<String>()
     );
     let found = provider
-        .extrinsic_by_id(melodie_ctx(), &hash_hex)
+        .extrinsic_by_id(allfeat_ctx(), &hash_hex)
         .await
         .expect("provider call succeeds")
         .expect("extrinsic exists under the hash we pulled from the DB");
@@ -155,7 +155,7 @@ async fn lookup_by_hash_from_db() {
 async fn extrinsic_by_id_round_trips_through_provider() {
     let db = fresh_db().await;
     let pool = db.pool().clone();
-    let client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
+    let client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
     let head = wait_for_finalized_head(&client, Duration::from_secs(15)).await;
 
     let from = head.saturating_sub(8);
@@ -200,16 +200,16 @@ async fn extrinsic_by_id_round_trips_through_provider() {
     .await
     .expect("backfilled row exists");
 
-    let rpc = Arc::new(melodie_provider(client.clone()));
+    let rpc = Arc::new(allfeat_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc,
         lookup_cell(networks.clone()),
     );
     let id = format!("{block_num}-{idx}");
     let got = provider
-        .extrinsic_by_id(melodie_ctx(), &id)
+        .extrinsic_by_id(allfeat_ctx(), &id)
         .await
         .expect("provider ok")
         .expect("extrinsic exists");
@@ -234,7 +234,7 @@ async fn buffer_lookup_tip() {
     // Build a buffer with one synthetic extrinsic. Hash value is
     // arbitrary but deterministic so the test can reconstruct the
     // 0x-prefixed string and feed it to the provider.
-    let buffer = shared(MELODIE.id);
+    let buffer = shared(ALLFEAT.id);
     let block_num = 999_999u64;
     let hash_bytes = [0x42u8; 32];
     let hash_hex = format!(
@@ -276,20 +276,20 @@ async fn buffer_lookup_tip() {
     // we only invoke `extrinsic_by_id`. A dummy client pointed at the
     // same URL keeps construction cheap and avoids introducing a
     // mock dependency.
-    let rpc_client = Arc::new(RpcClient::new(dev_node_url(), MELODIE.id, 42, RuntimeKind::Allfeat));
-    let rpc = Arc::new(melodie_provider(rpc_client));
+    let rpc_client = Arc::new(RpcClient::new(dev_node_url(), ALLFEAT.id, 42, RuntimeKind::Allfeat));
+    let rpc = Arc::new(allfeat_provider(rpc_client));
     let (networks, _author_lookup) = fresh_lookups(&pool).await;
     let provider = IndexedProvider::new(
         pool.clone(),
-        [MELODIE.id],
+        [ALLFEAT.id],
         rpc,
         lookup_cell(networks.clone()),
     )
-    .with_buffer(MELODIE.id, buffer);
+    .with_buffer(ALLFEAT.id, buffer);
 
     // Resolve by canonical id.
     let via_id = provider
-        .extrinsic_by_id(melodie_ctx(), &format!("{block_num}-0"))
+        .extrinsic_by_id(allfeat_ctx(), &format!("{block_num}-0"))
         .await
         .expect("provider ok")
         .expect("extrinsic resolves from buffer by id");
@@ -299,7 +299,7 @@ async fn buffer_lookup_tip() {
     // returns `ExtrinsicLookup::Hash`, the provider hits
     // `PendingBuffer::extrinsic_by_hash`).
     let via_hash = provider
-        .extrinsic_by_id(melodie_ctx(), &hash_hex)
+        .extrinsic_by_id(allfeat_ctx(), &hash_hex)
         .await
         .expect("provider ok")
         .expect("extrinsic resolves from buffer by hash");

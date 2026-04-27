@@ -1,9 +1,18 @@
-//! Live RPC integration tests against an Allfeat dev node.
+//! Live RPC integration tests against a dev node.
 //!
 //! All tests in this file are `#[ignore]` by default: they require a running
-//! node on `ws://127.0.0.1:9944` (override with `ALLFEAT_RPC_URL`). CI runs
-//! `cargo test` (no network); developers opt in with
+//! node on `ws://127.0.0.1:9944` (override the Allfeat-flavoured suite via
+//! `ALLFEAT_RPC_URL`, the Melodie-flavoured suite via `MELODIE_RPC_URL`).
+//! CI runs `cargo test` (no network); developers opt in with
 //! `cargo test -- --ignored`.
+//!
+//! The bulk of the file targets an Allfeat dev node; a smaller
+//! Melodie-tagged section at the bottom (`live_melodie_*`) exercises the
+//! sibling codegen + metadata blob against a Melodie dev node, so a
+//! regression that silently routes one runtime through the other's
+//! decoders fails here rather than at a pallet-specific page far
+//! downstream. The two suites can't share a node — pick one and run the
+//! matching subset.
 //!
 //! Keep these tests smoky and cheap — the richer assertions live in the unit
 //! tests under `#[cfg(test)]` inside the mapper modules.
@@ -21,25 +30,25 @@ use allfeat_explorer::data::filters::{
 use allfeat_explorer::data::rpc::{RpcClient, RpcProvider};
 use allfeat_explorer::data::ChainData;
 use allfeat_explorer::domain::PageRequest;
-use allfeat_explorer::network::{ChainCtx, RuntimeKind, MELODIE};
+use allfeat_explorer::network::{ChainCtx, RuntimeKind, ALLFEAT, MELODIE};
 
 fn endpoint() -> String {
     std::env::var("ALLFEAT_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string())
 }
 
-/// Build an `RpcProvider` keyed for the Melodie spec, pointing at the configured
+/// Build an `RpcProvider` keyed for the Allfeat spec, pointing at the configured
 /// dev node. All Block-flavoured integration tests share this constructor so
 /// the test surface mirrors how `AppState::from_config` wires the real server.
-fn melodie_provider() -> RpcProvider {
+fn allfeat_provider() -> RpcProvider {
     let mut clients: HashMap<&'static str, Arc<RpcClient>> = HashMap::new();
-    clients.insert(MELODIE.id, Arc::new(RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat)));
+    clients.insert(ALLFEAT.id, Arc::new(RpcClient::new(endpoint(), ALLFEAT.id, 42, RuntimeKind::Allfeat)));
     RpcProvider::new(clients)
 }
 
-fn melodie_ctx() -> ChainCtx {
+fn allfeat_ctx() -> ChainCtx {
     // `now_ms` doesn't matter for RPC-backed reads — the provider derives all
     // chain quantities from the node, not from `ctx.now_ms`. Pass 0.
-    ChainCtx::new(&MELODIE, 0)
+    ChainCtx::new(&ALLFEAT, 0)
 }
 
 /// Connects to the dev node, then resolves the genesis hash via subxt. Proves
@@ -47,7 +56,7 @@ fn melodie_ctx() -> ChainCtx {
 #[tokio::test]
 #[ignore]
 async fn live_connect_and_fetch_genesis() {
-    let client = RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
+    let client = RpcClient::new(endpoint(), ALLFEAT.id, 42, RuntimeKind::Allfeat);
     let api = client
         .subxt()
         .await
@@ -67,7 +76,7 @@ async fn live_connect_and_fetch_genesis() {
 #[tokio::test]
 #[ignore]
 async fn live_latest_block_fetches() {
-    let client = RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
+    let client = RpcClient::new(endpoint(), ALLFEAT.id, 42, RuntimeKind::Allfeat);
     let api = client.subxt().await.expect("connect to dev node");
 
     let at = api
@@ -85,8 +94,8 @@ async fn live_latest_block_fetches() {
 #[tokio::test]
 #[ignore]
 async fn live_block_0_is_genesis() {
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     let block = provider
         .block_by_number(ctx, 0)
@@ -114,8 +123,8 @@ async fn live_block_0_is_genesis() {
 #[tokio::test]
 #[ignore]
 async fn live_head_matches_best() {
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     let page = provider
         .latest_blocks(
@@ -178,8 +187,8 @@ async fn live_head_matches_best() {
 async fn live_block_1_has_timestamp_set_inherent() {
     use allfeat_explorer::domain::ExtrinsicArgs;
 
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     // Block 1 is the earliest block that carries a timestamp inherent (#0 has
     // no extrinsics). Using 1 keeps the assertion stable across dev-node runs.
@@ -220,8 +229,8 @@ async fn live_block_1_has_timestamp_set_inherent() {
 #[tokio::test]
 #[ignore]
 async fn live_extrinsic_by_id_roundtrip() {
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     let xs = provider
         .extrinsics_in_block(ctx, 1)
@@ -244,8 +253,8 @@ async fn live_extrinsic_by_id_roundtrip() {
 #[tokio::test]
 #[ignore]
 async fn live_extrinsic_by_id_missing_returns_none() {
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     // Way past any realistic dev-node head.
     let missing = provider
@@ -273,8 +282,8 @@ async fn live_extrinsic_by_id_missing_returns_none() {
 async fn live_alice_has_balance() {
     use subxt_signer::sr25519::dev;
 
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     let alice_ss58 = subxt::utils::AccountId32::from(dev::alice().public_key().0).to_string();
     let account = provider
@@ -306,8 +315,8 @@ async fn live_alice_has_balance() {
 #[tokio::test]
 #[ignore]
 async fn live_account_missing_is_zero_or_none() {
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     // An all-`0xAA` key has no chance of colliding with a dev fixture.
     let unknown = subxt::utils::AccountId32::from([0xAAu8; 32]).to_string();
@@ -330,8 +339,8 @@ async fn live_account_missing_is_zero_or_none() {
 #[tokio::test]
 #[ignore]
 async fn live_account_malformed_address_returns_none() {
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     let got = provider
         .account_by_address(ctx, "not-a-real-address")
@@ -345,8 +354,8 @@ async fn live_account_malformed_address_returns_none() {
 #[tokio::test]
 #[ignore]
 async fn live_top_accounts_sorted_desc() {
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     let top = provider
         .top_accounts(ctx, 5)
@@ -379,7 +388,7 @@ async fn live_alice_to_bob_transfer_shows_up() {
     use allfeat_explorer::data::rpc::runtime::allfeat;
     use subxt_signer::sr25519::dev;
 
-    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
+    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), ALLFEAT.id, 42, RuntimeKind::Allfeat);
     let api = client.subxt().await.expect("connect to dev node");
 
     let amount: u128 = 1_234_567_890_000;
@@ -412,10 +421,10 @@ async fn live_alice_to_bob_transfer_shows_up() {
     // Now verify the provider-side mapper picks it up. The latest_transfers
     // scan window (200 blocks) comfortably covers a fresh submission on a
     // dev chain; request a generous count to avoid pagination flakiness.
-    let provider = melodie_provider();
+    let provider = allfeat_provider();
     let page = provider
         .latest_transfers(
-            melodie_ctx(),
+            allfeat_ctx(),
             PageRequest {
                 count: 50,
                 cursor: None,
@@ -471,9 +480,9 @@ async fn live_alice_ats_create_and_update() {
     use allfeat_explorer::data::rpc::runtime::allfeat;
     use subxt_signer::sr25519::dev;
 
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
-    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
+    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), ALLFEAT.id, 42, RuntimeKind::Allfeat);
     let api = client.subxt().await.expect("connect to dev node");
 
     // Commitment / protocol_version unique per run so if the test is executed
@@ -664,8 +673,8 @@ async fn live_alice_ats_create_and_update() {
 #[tokio::test]
 #[ignore]
 async fn live_account_ats_handles_unknown_address() {
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     let req = || PageRequest {
         count: 10,
@@ -712,8 +721,8 @@ async fn live_account_ats_handles_unknown_address() {
 async fn live_block_by_number_hits_finalized_cache_on_second_call() {
     use std::time::Instant;
 
-    let provider = melodie_provider();
-    let ctx = melodie_ctx();
+    let provider = allfeat_provider();
+    let ctx = allfeat_ctx();
 
     // Warm the subxt `OnceCell` with a throwaway call — otherwise the first
     // timed call pays for the connection handshake, which dwarfs the RPC
@@ -725,7 +734,7 @@ async fn live_block_by_number_hits_finalized_cache_on_second_call() {
 
     // Use a fresh provider so both calls go through an empty cache first,
     // then a populated one.
-    let provider = melodie_provider();
+    let provider = allfeat_provider();
     // Prime subxt on the fresh provider too (connection handshake is shared
     // across tests via `SubxtClient::from_url`; giving this provider a
     // chance to open its own client makes the "miss" call a pure cache
@@ -776,8 +785,8 @@ async fn live_block_by_number_hits_finalized_cache_on_second_call() {
 async fn live_block_by_number_coalesces_concurrent_misses() {
     use std::time::Instant;
 
-    let provider = Arc::new(melodie_provider());
-    let ctx = melodie_ctx();
+    let provider = Arc::new(allfeat_provider());
+    let ctx = allfeat_ctx();
 
     let t = Instant::now();
     let mut handles = Vec::with_capacity(50);
@@ -822,7 +831,7 @@ async fn live_block_by_number_coalesces_concurrent_misses() {
 async fn live_finalized_head_subscription_publishes() {
     use std::time::{Duration, Instant};
 
-    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
+    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), ALLFEAT.id, 42, RuntimeKind::Allfeat);
     // Trigger connect → spawns the subscription task as a side effect.
     let _ = client.subxt().await.expect("connect to dev node");
 
@@ -858,7 +867,7 @@ async fn live_finalized_head_subscription_publishes() {
 async fn live_invalidate_clears_finalized_head_watch() {
     use std::time::{Duration, Instant};
 
-    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), MELODIE.id, 42, RuntimeKind::Allfeat);
+    let client = allfeat_explorer::data::rpc::RpcClient::new(endpoint(), ALLFEAT.id, 42, RuntimeKind::Allfeat);
     let _ = client.subxt().await.expect("connect to dev node");
 
     // Wait for the first notification so the watch is populated.
@@ -882,4 +891,92 @@ async fn live_invalidate_clears_finalized_head_watch() {
         .subxt()
         .await
         .expect("reconnect after invalidate must succeed");
+}
+
+// ----- Melodie sibling-runtime smoke tests ------------------------------
+//
+// These tests stand up an `RpcClient` tagged with `RuntimeKind::Melodie`
+// so the Melodie codegen module + bundled metadata blob get exercised
+// end-to-end. They share no state with the Allfeat block above — point
+// `MELODIE_RPC_URL` at a Melodie dev node before running them, and the
+// Allfeat suite at an Allfeat dev node. Both suites are `#[ignore]`,
+// so a default `cargo test` is unaffected.
+//
+// Coverage is intentionally minimal: connect + decode a genesis block.
+// A regression that silently swapped the Melodie blob for the Allfeat
+// one (or routed Melodie traffic through Allfeat codegen types) fails
+// here rather than at a pallet-specific page far downstream.
+
+fn melodie_endpoint() -> String {
+    std::env::var("MELODIE_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string())
+}
+
+fn melodie_provider() -> RpcProvider {
+    let mut clients: HashMap<&'static str, Arc<RpcClient>> = HashMap::new();
+    clients.insert(
+        MELODIE.id,
+        Arc::new(RpcClient::new(
+            melodie_endpoint(),
+            MELODIE.id,
+            42,
+            RuntimeKind::Melodie,
+        )),
+    );
+    RpcProvider::new(clients)
+}
+
+fn melodie_ctx() -> ChainCtx {
+    ChainCtx::new(&MELODIE, 0)
+}
+
+/// Connects to a Melodie dev node and resolves the genesis hash through
+/// the Melodie-tagged client. Smoke check that the sibling codegen + the
+/// `MELODIE_RUNTIME` metadata bundle are wired together correctly — a
+/// stale or mis-routed blob would surface as a connect or decode error
+/// here rather than as silent corruption deeper in.
+#[tokio::test]
+#[ignore]
+async fn live_melodie_connect_and_fetch_genesis() {
+    let client = RpcClient::new(
+        melodie_endpoint(),
+        MELODIE.id,
+        42,
+        RuntimeKind::Melodie,
+    );
+    let api = client
+        .subxt()
+        .await
+        .expect("connect to Melodie dev node (is MELODIE_RPC_URL up?)");
+
+    let genesis = api.genesis_hash();
+    assert_ne!(
+        genesis.as_ref(),
+        &[0u8; 32],
+        "genesis hash must be non-zero"
+    );
+}
+
+/// Round-trips block 0 through the `RuntimeKind::Melodie` dispatch in
+/// every mapper that touches Timestamp/Session/System on the read path.
+/// Same shape contract as `live_block_0_is_genesis` — the per-runtime
+/// match arms must produce the same structural result for the genesis
+/// block on either chain.
+#[tokio::test]
+#[ignore]
+async fn live_melodie_block_0_is_genesis() {
+    let provider = melodie_provider();
+    let ctx = melodie_ctx();
+
+    let block = provider
+        .block_by_number(ctx, 0)
+        .await
+        .expect("RPC succeeds")
+        .expect("genesis block (#0) must exist on a running Melodie dev node");
+
+    assert_eq!(block.number, 0, "block 0 should report number 0");
+    assert_eq!(
+        block.parent_hash,
+        format!("0x{}", "00".repeat(32)),
+        "genesis block parent must be all zeros",
+    );
 }
