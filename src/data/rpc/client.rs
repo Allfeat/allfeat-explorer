@@ -668,6 +668,7 @@ impl RpcClient {
         let alive = self.watcher_alive.clone();
         let ss58_prefix = self.ss58_prefix;
         let network_id = self.network_id;
+        let runtime_kind = self.runtime_kind;
 
         tokio::spawn(async move {
             run_watcher_supervisor(
@@ -680,6 +681,7 @@ impl RpcClient {
                 transfers_tx,
                 ats_feed_tx,
                 network_id,
+                runtime_kind,
                 ss58_prefix,
             )
             .await;
@@ -720,6 +722,7 @@ async fn run_watcher_supervisor(
     transfers_tx: broadcast::Sender<Transfer>,
     ats_feed_tx: broadcast::Sender<AtsFeedItem>,
     network_id: &'static str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) {
     let mut backoff = WATCHER_INITIAL_BACKOFF;
@@ -749,6 +752,7 @@ async fn run_watcher_supervisor(
             &transfers_tx,
             &ats_feed_tx,
             network_id,
+            runtime_kind,
             ss58_prefix,
         )
         .await
@@ -829,11 +833,12 @@ async fn run_streams(
     transfers_tx: &broadcast::Sender<Transfer>,
     ats_feed_tx: &broadcast::Sender<AtsFeedItem>,
     network_id: &'static str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> StreamExit {
     tokio::select! {
-        exit = run_finalized_head_watch(client, head_tx, blocks_tx, ss58_prefix) => exit,
-        exit = run_best_stream(client, head_rx, best_head_tx, blocks_tx, transfers_tx, ats_feed_tx, network_id, ss58_prefix) => exit,
+        exit = run_finalized_head_watch(client, head_tx, blocks_tx, runtime_kind, ss58_prefix) => exit,
+        exit = run_best_stream(client, head_rx, best_head_tx, blocks_tx, transfers_tx, ats_feed_tx, network_id, runtime_kind, ss58_prefix) => exit,
     }
 }
 
@@ -848,6 +853,7 @@ async fn run_finalized_head_watch(
     client: &SubxtClient,
     head_tx: &watch::Sender<Option<u64>>,
     blocks_tx: &broadcast::Sender<Block>,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> StreamExit {
     let mut stream = match client.stream_blocks().await {
@@ -884,7 +890,7 @@ async fn run_finalized_head_watch(
                 continue;
             }
         };
-        match mappers::map_block(&at, number, ss58_prefix).await {
+        match mappers::map_block(&at, number, runtime_kind, ss58_prefix).await {
             Ok(b) => {
                 let _ = blocks_tx.send(b);
             }
@@ -918,6 +924,7 @@ async fn run_best_stream(
     transfers_tx: &broadcast::Sender<Transfer>,
     ats_feed_tx: &broadcast::Sender<AtsFeedItem>,
     network_id: &'static str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> StreamExit {
     let mut stream = match client.stream_best_blocks().await {
@@ -969,7 +976,7 @@ async fn run_best_stream(
         let finalized_head = head_rx.borrow().unwrap_or(0);
 
         if has_blocks {
-            match mappers::map_block(&at, finalized_head, ss58_prefix).await {
+            match mappers::map_block(&at, finalized_head, runtime_kind, ss58_prefix).await {
                 Ok(b) => {
                     let _ = blocks_tx.send(b);
                 }
@@ -982,13 +989,15 @@ async fn run_best_stream(
         // phase index across both mappers. Early-return each failure
         // independently so one ladder stays flat.
         if has_transfers {
-            if let Err(e) = enrich_transfers(&at, transfers_tx, network_id, ss58_prefix).await {
+            if let Err(e) =
+                enrich_transfers(&at, transfers_tx, network_id, runtime_kind, ss58_prefix).await
+            {
                 tracing::debug!(error = %e, number, "enrich skip: transfers");
             }
         }
 
         if has_ats {
-            match mappers::fetch_next_ats_id(&at).await {
+            match mappers::fetch_next_ats_id(&at, runtime_kind).await {
                 Ok(current) => {
                     let previous = last_next_ats_id.unwrap_or(current);
                     if current > previous {
@@ -999,6 +1008,7 @@ async fn run_best_stream(
                             delta,
                             0,
                             network_id,
+                            runtime_kind,
                             ss58_prefix,
                         )
                         .await
@@ -1033,15 +1043,22 @@ async fn enrich_transfers(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     transfers_tx: &broadcast::Sender<Transfer>,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<()> {
-    let timestamp_ms = mappers::fetch_timestamp(at).await?;
+    let timestamp_ms = mappers::fetch_timestamp(at, runtime_kind).await?;
     let events = mappers::fetch_block_events(at).await?;
     let events_by_phase = mappers::index_events_by_phase(&events)?;
-    let xs =
-        mappers::map_extrinsics(at, timestamp_ms, &events_by_phase, network_id, ss58_prefix)
-            .await?;
-    for t in mappers::map_transfers(&xs, &events_by_phase, ss58_prefix)? {
+    let xs = mappers::map_extrinsics(
+        at,
+        timestamp_ms,
+        &events_by_phase,
+        network_id,
+        runtime_kind,
+        ss58_prefix,
+    )
+    .await?;
+    for t in mappers::map_transfers(&xs, &events_by_phase, runtime_kind, ss58_prefix)? {
         let _ = transfers_tx.send(t);
     }
     Ok(())

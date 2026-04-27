@@ -2,6 +2,18 @@
 //! treasury. Mainnet-only pallet — callers must gate on the network id
 //! before invoking any of these helpers.
 //!
+//! Unlike the other mappers in this directory, this one doesn't dispatch on
+//! [`crate::network::RuntimeKind`]: `pallet-token-allocation` and
+//! `pallet-treasury` are absent from the Melodie runtime, so every public
+//! entry point is guarded upstream by
+//! [`crate::data::provider::ensure_token_network`] (which returns
+//! [`DataError::NotSupported`](crate::data::error::DataError::NotSupported) on
+//! anything other than `allfeat`). Adding a Melodie arm here would dead-code
+//! the dispatch and tempt future readers into wiring up calls that the
+//! provider would reject anyway. If a Melodie-side allocation pallet ever
+//! lands, route it through a sibling module rather than collapsing the two
+//! shapes into a fake `match`.
+//!
 //! The pallet exposes three storage items the explorer cares about:
 //! * `Envelopes(EnvelopeId) -> EnvelopeConfig` — static tokenomics per budget
 //!   pocket (cap, upfront %, cliff, vesting duration).

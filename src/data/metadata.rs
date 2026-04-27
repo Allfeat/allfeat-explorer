@@ -485,21 +485,24 @@ mod tests {
     /// hand via `codec::Compact` and run it through the decoder so the
     /// field lookup, `scale_decode` walk, and value rendering are
     /// exercised end-to-end without leaning on the generated call type's
-    /// internals.
+    /// internals. Run for each network so a future regression that
+    /// silently routes one runtime's decoder through the other's blob
+    /// fails here rather than at a pallet-specific page far downstream.
     #[cfg(not(feature = "mock"))]
     #[test]
-    fn decode_call_fields_round_trips_timestamp_set() {
+    fn decode_call_fields_round_trips_timestamp_set_per_runtime() {
         use subxt::ext::codec::{Compact, Encode};
         let now: u64 = 1_700_000_000_000;
         let bytes = Compact(now).encode();
-        let fields = decode_call_fields("allfeat", "Timestamp", "set", &bytes, 42);
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].name.as_deref(), Some("now"));
-        let parsed: u64 = fields[0]
-            .value
-            .parse()
-            .unwrap_or_else(|_| panic!("`now` not a plain integer: {:?}", fields[0].value));
-        assert_eq!(parsed, now);
+        for id in ["allfeat", "melodie"] {
+            let fields = decode_call_fields(id, "Timestamp", "set", &bytes, 42);
+            assert_eq!(fields.len(), 1, "[{id}] expected single field");
+            assert_eq!(fields[0].name.as_deref(), Some("now"), "[{id}] field name");
+            let parsed: u64 = fields[0].value.parse().unwrap_or_else(|_| {
+                panic!("[{id}] `now` not a plain integer: {:?}", fields[0].value)
+            });
+            assert_eq!(parsed, now, "[{id}] round-trip mismatch");
+        }
     }
 
     /// An unknown call name on a real pallet — same shape contract as

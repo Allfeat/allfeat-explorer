@@ -24,7 +24,8 @@ use crate::data::rpc::mappers::{
     aura_slot, author_from_slot, fetch_block_events, fetch_extrinsics_summary, fetch_timestamp,
     fetch_weights,
 };
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
+use crate::network::RuntimeKind;
 
 /// Row shape for `blocks`. Field order mirrors the `INSERT` statement
 /// in [`crate::indexer::sink`]; adding a column means touching both
@@ -63,6 +64,7 @@ pub struct BlockRow {
 pub async fn map(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     block_num: u64,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<BlockRow> {
     let header = with_timeout("block_header", async {
         at.block_header()
@@ -72,11 +74,11 @@ pub async fn map(
     .await?;
 
     let hash = at.block_hash();
-    let timestamp_ms = fetch_timestamp(at).await?;
-    let author = resolve_author_bytes(at, &header.digest).await?;
+    let timestamp_ms = fetch_timestamp(at, runtime_kind).await?;
+    let author = resolve_author_bytes(at, &header.digest, runtime_kind).await?;
 
     let (extrinsic_count, size_extrinsics) = fetch_extrinsics_summary(at).await?;
-    let (ref_time, proof_size, ref_time_pct) = fetch_weights(at).await?;
+    let (ref_time, proof_size, ref_time_pct) = fetch_weights(at, runtime_kind).await?;
     let size_bytes = (header.encoded_size() + size_extrinsics) as u32;
 
     let events = fetch_block_events(at).await?;
@@ -115,6 +117,7 @@ pub async fn map(
 async fn resolve_author_bytes(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     digest: &Digest,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<Option<[u8; 32]>> {
     let Some(slot) = aura_slot(digest) else {
         return Ok(None);
@@ -123,21 +126,41 @@ async fn resolve_author_bytes(
     // See `mappers::blocks::resolve_author`: `aura.authorities()` exposes
     // session keys, not accounts. `session.validators()` is the accounts
     // list that Aura's authority set is built from, in the same order — so
-    // the slot modulo still lands on the right producer.
-    let validators_value = with_timeout("fetch_session_validators", async {
-        at.storage()
-            .try_fetch(allfeat::storage().session().validators(), ())
-            .await
-            .map_err(|e| DataError::Rpc(format!("fetch session validators: {e}")))
-    })
-    .await?;
-    let Some(validators_value) = validators_value else {
-        return Ok(None);
+    // the slot modulo still lands on the right producer. Each runtime arm
+    // folds its codegen-typed value into the same `Vec<AccountId32>` before
+    // crossing the match boundary.
+    let validators: Vec<AccountId32> = match runtime_kind {
+        RuntimeKind::Allfeat => {
+            let value = with_timeout("fetch_session_validators", async {
+                at.storage()
+                    .try_fetch(allfeat::storage().session().validators(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch session validators: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(None);
+            };
+            value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode session validators: {e}")))?
+        }
+        RuntimeKind::Melodie => {
+            let value = with_timeout("fetch_session_validators", async {
+                at.storage()
+                    .try_fetch(melodie::storage().session().validators(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch session validators: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(None);
+            };
+            value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode session validators: {e}")))?
+        }
     };
-
-    let validators: Vec<AccountId32> = validators_value
-        .decode()
-        .map_err(|e| DataError::Decode(format!("decode session validators: {e}")))?;
 
     Ok(author_from_slot(slot, &validators).map(|id| {
         let mut out = [0u8; 32];

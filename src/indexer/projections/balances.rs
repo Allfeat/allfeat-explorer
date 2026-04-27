@@ -39,9 +39,37 @@ use subxt::SubstrateConfig;
 
 use crate::data::error::{DataError, DataResult};
 use crate::data::rpc::mappers::fetch_block_events;
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
+use crate::network::RuntimeKind;
 
 use super::extrinsics::ExtrinsicRow;
+
+/// Decode an event against the active runtime's codegen and run `body`
+/// against the decoded value. Each runtime arm produces a distinct Rust
+/// type for `$d`, but the macro body only references fields/types that
+/// are subxt-shared (e.g. `AccountId32`, primitives), so the body's
+/// expression has the same type in both arms and the surrounding
+/// expression's type checks. Localised to this projection because no
+/// other site dispatches across this many event variants — see
+/// `decode_balance_event` for usage.
+macro_rules! decode_event {
+    ($evt:expr, $rk:expr, $pallet:ident, $variant:ident, $err:literal, |$d:ident| $body:expr) => {
+        match $rk {
+            RuntimeKind::Allfeat => {
+                let $d = $evt
+                    .decode_fields_unchecked_as::<allfeat::$pallet::events::$variant>()
+                    .map_err(|e| DataError::Decode(format!(concat!($err, ": {}"), e)))?;
+                $body
+            }
+            RuntimeKind::Melodie => {
+                let $d = $evt
+                    .decode_fields_unchecked_as::<melodie::$pallet::events::$variant>()
+                    .map_err(|e| DataError::Decode(format!(concat!($err, ": {}"), e)))?;
+                $body
+            }
+        }
+    };
+}
 
 /// Discriminants stored in `balance_movements.kind`. Order locked to
 /// the comment in `migrations/001_initial.sql` — adding a variant means
@@ -509,6 +537,7 @@ pub async fn project_block(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     extrinsics: &[ExtrinsicRow],
     block_num: u64,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<BlockBalanceProjection> {
     let events = fetch_block_events(at).await?;
     let mut decoded = Vec::new();
@@ -523,7 +552,7 @@ pub async fn project_block(
         if !matches!(evt.phase(), Phase::ApplyExtrinsic(_)) {
             continue;
         }
-        if let Some(d) = decode_balance_event(&evt, &mut touched_accounts)? {
+        if let Some(d) = decode_balance_event(&evt, &mut touched_accounts, runtime_kind)? {
             decoded.push((idx as u32, d));
         }
     }
@@ -553,289 +582,293 @@ pub async fn project_block(
 fn decode_balance_event(
     evt: &subxt::events::Event<'_, SubstrateConfig>,
     touched: &mut Vec<[u8; 32]>,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<Option<DecodedBalanceEvent>> {
     match (evt.pallet_name(), evt.event_name()) {
         ("Balances", "Transfer") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Transfer>()
-                .map_err(|e| DataError::Decode(format!("Balances.Transfer: {e}")))?;
-            let from = account_bytes(&d.from);
-            let to = account_bytes(&d.to);
-            touched.push(from);
-            touched.push(to);
-            Ok(Some(DecodedBalanceEvent::Transfer {
-                from,
-                to,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Transfer, "Balances.Transfer", |d| {
+                let from = account_bytes(&d.from);
+                let to = account_bytes(&d.to);
+                touched.push(from);
+                touched.push(to);
+                Ok(Some(DecodedBalanceEvent::Transfer {
+                    from,
+                    to,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Deposit") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Deposit>()
-                .map_err(|e| DataError::Decode(format!("Balances.Deposit: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Deposit {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Deposit, "Balances.Deposit", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Deposit {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Withdraw") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Withdraw>()
-                .map_err(|e| DataError::Decode(format!("Balances.Withdraw: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Withdraw {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Withdraw, "Balances.Withdraw", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Withdraw {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Slashed") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Slashed>()
-                .map_err(|e| DataError::Decode(format!("Balances.Slashed: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Slash {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Slashed, "Balances.Slashed", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Slash {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Reserved") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Reserved>()
-                .map_err(|e| DataError::Decode(format!("Balances.Reserved: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Reserve {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Reserved, "Balances.Reserved", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Reserve {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Unreserved") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Unreserved>()
-                .map_err(|e| DataError::Decode(format!("Balances.Unreserved: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Unreserve {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Unreserved, "Balances.Unreserved", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Unreserve {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "ReserveRepatriated") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::ReserveRepatriated>()
-                .map_err(|e| DataError::Decode(format!("Balances.ReserveRepatriated: {e}")))?;
-            let from = account_bytes(&d.from);
-            touched.push(from);
-            Ok(Some(DecodedBalanceEvent::ReserveRepatriated {
-                from,
-                amount: d.amount,
-            }))
+            decode_event!(
+                evt,
+                runtime_kind,
+                balances,
+                ReserveRepatriated,
+                "Balances.ReserveRepatriated",
+                |d| {
+                    let from = account_bytes(&d.from);
+                    touched.push(from);
+                    Ok(Some(DecodedBalanceEvent::ReserveRepatriated {
+                        from,
+                        amount: d.amount,
+                    }))
+                }
+            )
         }
         ("Balances", "Burned") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Burned>()
-                .map_err(|e| DataError::Decode(format!("Balances.Burned: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Burn {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Burned, "Balances.Burned", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Burn {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Minted") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Minted>()
-                .map_err(|e| DataError::Decode(format!("Balances.Minted: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Mint {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Minted, "Balances.Minted", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Mint {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Frozen") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Frozen>()
-                .map_err(|e| DataError::Decode(format!("Balances.Frozen: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Frozen {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Frozen, "Balances.Frozen", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Frozen {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Thawed") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Thawed>()
-                .map_err(|e| DataError::Decode(format!("Balances.Thawed: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Thawed {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Thawed, "Balances.Thawed", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Thawed {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Locked") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Locked>()
-                .map_err(|e| DataError::Decode(format!("Balances.Locked: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Locked {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Locked, "Balances.Locked", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Locked {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Unlocked") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Unlocked>()
-                .map_err(|e| DataError::Decode(format!("Balances.Unlocked: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Unlocked {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Unlocked, "Balances.Unlocked", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Unlocked {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Held") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Held>()
-                .map_err(|e| DataError::Decode(format!("Balances.Held: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Held {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Held, "Balances.Held", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Held {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Released") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Released>()
-                .map_err(|e| DataError::Decode(format!("Balances.Released: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Released {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Released, "Balances.Released", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Released {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "BurnedHeld") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::BurnedHeld>()
-                .map_err(|e| DataError::Decode(format!("Balances.BurnedHeld: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::BurnedHeld {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, BurnedHeld, "Balances.BurnedHeld", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::BurnedHeld {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "TransferAndHold") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::TransferAndHold>()
-                .map_err(|e| DataError::Decode(format!("Balances.TransferAndHold: {e}")))?;
-            let source = account_bytes(&d.source);
-            let dest = account_bytes(&d.dest);
-            touched.push(source);
-            touched.push(dest);
-            Ok(Some(DecodedBalanceEvent::TransferAndHold {
-                source,
-                dest,
-                amount: d.transferred,
-            }))
+            decode_event!(
+                evt,
+                runtime_kind,
+                balances,
+                TransferAndHold,
+                "Balances.TransferAndHold",
+                |d| {
+                    let source = account_bytes(&d.source);
+                    let dest = account_bytes(&d.dest);
+                    touched.push(source);
+                    touched.push(dest);
+                    Ok(Some(DecodedBalanceEvent::TransferAndHold {
+                        source,
+                        dest,
+                        amount: d.transferred,
+                    }))
+                }
+            )
         }
         ("Balances", "TransferOnHold") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::TransferOnHold>()
-                .map_err(|e| DataError::Decode(format!("Balances.TransferOnHold: {e}")))?;
-            let source = account_bytes(&d.source);
-            let dest = account_bytes(&d.dest);
-            touched.push(source);
-            touched.push(dest);
-            Ok(Some(DecodedBalanceEvent::TransferOnHold {
-                source,
-                dest,
-                amount: d.amount,
-            }))
+            decode_event!(
+                evt,
+                runtime_kind,
+                balances,
+                TransferOnHold,
+                "Balances.TransferOnHold",
+                |d| {
+                    let source = account_bytes(&d.source);
+                    let dest = account_bytes(&d.dest);
+                    touched.push(source);
+                    touched.push(dest);
+                    Ok(Some(DecodedBalanceEvent::TransferOnHold {
+                        source,
+                        dest,
+                        amount: d.amount,
+                    }))
+                }
+            )
         }
         ("Balances", "Endowed") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Endowed>()
-                .map_err(|e| DataError::Decode(format!("Balances.Endowed: {e}")))?;
-            let account = account_bytes(&d.account);
-            touched.push(account);
-            Ok(Some(DecodedBalanceEvent::Endowed {
-                account,
-                amount: d.free_balance,
-            }))
+            decode_event!(evt, runtime_kind, balances, Endowed, "Balances.Endowed", |d| {
+                let account = account_bytes(&d.account);
+                touched.push(account);
+                Ok(Some(DecodedBalanceEvent::Endowed {
+                    account,
+                    amount: d.free_balance,
+                }))
+            })
         }
         ("Balances", "DustLost") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::DustLost>()
-                .map_err(|e| DataError::Decode(format!("Balances.DustLost: {e}")))?;
-            let account = account_bytes(&d.account);
-            touched.push(account);
-            Ok(Some(DecodedBalanceEvent::DustLost {
-                account,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, DustLost, "Balances.DustLost", |d| {
+                let account = account_bytes(&d.account);
+                touched.push(account);
+                Ok(Some(DecodedBalanceEvent::DustLost {
+                    account,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Restored") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Restored>()
-                .map_err(|e| DataError::Decode(format!("Balances.Restored: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Restored {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Restored, "Balances.Restored", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Restored {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "Suspended") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Suspended>()
-                .map_err(|e| DataError::Decode(format!("Balances.Suspended: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Suspended {
-                who,
-                amount: d.amount,
-            }))
+            decode_event!(evt, runtime_kind, balances, Suspended, "Balances.Suspended", |d| {
+                let who = account_bytes(&d.who);
+                touched.push(who);
+                Ok(Some(DecodedBalanceEvent::Suspended {
+                    who,
+                    amount: d.amount,
+                }))
+            })
         }
         ("Balances", "BalanceSet") => {
             // Root override — delta is unknowable without the prior
             // balance, so we don't emit a movement row. The snapshot
             // pipeline picks up the new value via `touched`.
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::BalanceSet>()
-                .map_err(|e| DataError::Decode(format!("Balances.BalanceSet: {e}")))?;
-            touched.push(account_bytes(&d.who));
-            Ok(None)
+            decode_event!(evt, runtime_kind, balances, BalanceSet, "Balances.BalanceSet", |d| {
+                touched.push(account_bytes(&d.who));
+                Ok(None)
+            })
         }
         ("Balances", "Upgraded") => {
             // Account storage migration (no balance change, but the
             // System::Account row flips shape and the snapshot is a
             // good time to re-read it).
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Upgraded>()
-                .map_err(|e| DataError::Decode(format!("Balances.Upgraded: {e}")))?;
-            touched.push(account_bytes(&d.who));
-            Ok(None)
+            decode_event!(evt, runtime_kind, balances, Upgraded, "Balances.Upgraded", |d| {
+                touched.push(account_bytes(&d.who));
+                Ok(None)
+            })
         }
         ("TransactionPayment", "TransactionFeePaid") => {
-            let d = evt
-                .decode_fields_unchecked_as::<allfeat::transaction_payment::events::TransactionFeePaid>()
-                .map_err(|e| DataError::Decode(format!("TransactionPayment.TransactionFeePaid: {e}")))?;
-            let who = account_bytes(&d.who);
-            touched.push(who);
-            Ok(Some(DecodedBalanceEvent::Fee {
-                who,
-                amount: d.actual_fee,
-            }))
+            decode_event!(
+                evt,
+                runtime_kind,
+                transaction_payment,
+                TransactionFeePaid,
+                "TransactionPayment.TransactionFeePaid",
+                |d| {
+                    let who = account_bytes(&d.who);
+                    touched.push(who);
+                    Ok(Some(DecodedBalanceEvent::Fee {
+                        who,
+                        amount: d.actual_fee,
+                    }))
+                }
+            )
         }
         _ => Ok(None),
     }

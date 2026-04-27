@@ -36,7 +36,8 @@ use subxt::SubstrateConfig;
 
 use crate::data::error::{DataError, DataResult};
 use crate::data::rpc::mappers::fetch_block_events;
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
+use crate::network::RuntimeKind;
 
 use super::extrinsics::ExtrinsicRow;
 
@@ -195,6 +196,7 @@ pub async fn project_block(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     extrinsics: &[ExtrinsicRow],
     block_num: u64,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<AtsOps> {
     let events = fetch_block_events(at).await?;
     let mut decoded = Vec::new();
@@ -207,7 +209,7 @@ pub async fn project_block(
         let Phase::ApplyExtrinsic(ext_idx) = evt.phase() else {
             continue;
         };
-        if let Some(d) = decode_ats_event(&evt)? {
+        if let Some(d) = decode_ats_event(&evt, runtime_kind)? {
             decoded.push((ext_idx, d));
         }
     }
@@ -217,12 +219,15 @@ pub async fn project_block(
 /// Match an event to its [`DecodedAtsEvent`]. Returns `Ok(None)` for
 /// any pallet/variant outside `Ats.*`; bubbles a decode error only when
 /// a *known* variant fails to decode (metadata/runtime drift worth
-/// surfacing loudly).
+/// surfacing loudly). Each runtime arm decodes against its own codegen
+/// types and folds the result into the runtime-neutral
+/// [`DecodedAtsEvent`].
 fn decode_ats_event(
     evt: &subxt::events::Event<'_, SubstrateConfig>,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<Option<DecodedAtsEvent>> {
-    match (evt.pallet_name(), evt.event_name()) {
-        ("Ats", "AtsCreated") => {
+    match (evt.pallet_name(), evt.event_name(), runtime_kind) {
+        ("Ats", "AtsCreated", RuntimeKind::Allfeat) => {
             let d = evt
                 .decode_fields_unchecked_as::<allfeat::ats::events::AtsCreated>()
                 .map_err(|e| DataError::Decode(format!("Ats.AtsCreated: {e}")))?;
@@ -233,7 +238,18 @@ fn decode_ats_event(
                 protocol_version: d.protocol_version,
             }))
         }
-        ("Ats", "AtsUpdated") => {
+        ("Ats", "AtsCreated", RuntimeKind::Melodie) => {
+            let d = evt
+                .decode_fields_unchecked_as::<melodie::ats::events::AtsCreated>()
+                .map_err(|e| DataError::Decode(format!("Ats.AtsCreated: {e}")))?;
+            Ok(Some(DecodedAtsEvent::Created {
+                ats_id: d.ats_id,
+                owner: account_bytes(&d.owner),
+                commitment: d.commitment,
+                protocol_version: d.protocol_version,
+            }))
+        }
+        ("Ats", "AtsUpdated", RuntimeKind::Allfeat) => {
             let d = evt
                 .decode_fields_unchecked_as::<allfeat::ats::events::AtsUpdated>()
                 .map_err(|e| DataError::Decode(format!("Ats.AtsUpdated: {e}")))?;
@@ -244,9 +260,26 @@ fn decode_ats_event(
                 protocol_version: d.protocol_version,
             }))
         }
-        ("Ats", "AtsRevoked") => {
+        ("Ats", "AtsUpdated", RuntimeKind::Melodie) => {
+            let d = evt
+                .decode_fields_unchecked_as::<melodie::ats::events::AtsUpdated>()
+                .map_err(|e| DataError::Decode(format!("Ats.AtsUpdated: {e}")))?;
+            Ok(Some(DecodedAtsEvent::Updated {
+                ats_id: d.ats_id,
+                version: d.version,
+                commitment: d.commitment,
+                protocol_version: d.protocol_version,
+            }))
+        }
+        ("Ats", "AtsRevoked", RuntimeKind::Allfeat) => {
             let d = evt
                 .decode_fields_unchecked_as::<allfeat::ats::events::AtsRevoked>()
+                .map_err(|e| DataError::Decode(format!("Ats.AtsRevoked: {e}")))?;
+            Ok(Some(DecodedAtsEvent::Revoked { ats_id: d.ats_id }))
+        }
+        ("Ats", "AtsRevoked", RuntimeKind::Melodie) => {
+            let d = evt
+                .decode_fields_unchecked_as::<melodie::ats::events::AtsRevoked>()
                 .map_err(|e| DataError::Decode(format!("Ats.AtsRevoked: {e}")))?;
             Ok(Some(DecodedAtsEvent::Revoked { ats_id: d.ats_id }))
         }

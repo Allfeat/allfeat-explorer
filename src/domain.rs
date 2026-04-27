@@ -396,7 +396,8 @@ pub struct AtsStats {
 
 /// Full `Core_version` decode (matches `sp_version::RuntimeVersion`). All
 /// fields are on-chain except `metadata_version`, which is detected once
-/// from the bundled metadata blob (see `data::metadata::METADATA_VERSION`).
+/// from the bundled metadata blob (see
+/// [`crate::data::metadata::metadata_version_for`]).
 /// `state_version` is optional because pre-V15 runtimes drop it from the
 /// SCALE tail; callers should render it as "unknown" in that case rather
 /// than zero.
@@ -449,7 +450,8 @@ pub struct RuntimeDetails {
     pub at_block: u64,
     pub at_block_hash: String,
     /// `V14 | V15 | V16` — the version of the compile-time metadata blob
-    /// used for SCALE decoding (see `data::metadata::METADATA_VERSION`).
+    /// used for SCALE decoding (see
+    /// [`crate::data::metadata::metadata_version_for`]).
     pub metadata_version: u8,
 }
 

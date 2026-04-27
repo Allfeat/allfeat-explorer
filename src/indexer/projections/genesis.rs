@@ -27,7 +27,8 @@ use subxt::SubstrateConfig;
 use crate::data::error::{DataError, DataResult};
 use crate::data::rpc::client::with_iter_timeout;
 use crate::data::rpc::mappers::accounts::AccountSnapshot;
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
+use crate::network::RuntimeKind;
 
 /// Iterate `System::Account` at the block `at` refers to and return one
 /// absolute [`AccountSnapshot`] per entry. Intended to be called against
@@ -35,40 +36,85 @@ use crate::data::rpc::runtime::allfeat;
 /// uses for regular per-block snapshots.
 pub async fn project_genesis_accounts(
     at: &OnlineClientAtBlock<SubstrateConfig>,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<Vec<([u8; 32], AccountSnapshot)>> {
     with_iter_timeout("project_genesis_accounts", async {
-        let mut entries = at
-            .storage()
-            .iter(allfeat::storage().system().account(), ())
-            .await
-            .map_err(|e| DataError::Rpc(format!("iter system.account (genesis): {e}")))?;
-
-        let mut out = Vec::new();
-        while let Some(kv) = entries.next().await {
-            let kv =
-                kv.map_err(|e| DataError::Rpc(format!("iter system.account (genesis) next: {e}")))?;
-            let (id,) = kv
-                .key()
-                .map_err(|e| DataError::Decode(format!("system.account key (genesis): {e}")))?
-                .decode()
-                .map_err(|e| {
-                    DataError::Decode(format!("decode system.account key (genesis): {e}"))
-                })?;
-            let info = kv
-                .value()
-                .decode()
-                .map_err(|e| DataError::Decode(format!("decode AccountInfo (genesis): {e}")))?;
-            let mut account = [0u8; 32];
-            account.copy_from_slice(id.as_ref());
-            out.push((
-                account,
-                AccountSnapshot {
-                    free: info.data.free,
-                    reserved: info.data.reserved,
-                    frozen: info.data.frozen,
-                    nonce: info.nonce,
-                },
-            ));
+        // Each arm walks its own runtime-typed iterator and lowers the
+        // codegen `AccountInfo` into the runtime-neutral `AccountSnapshot`
+        // before pushing to `out` — keeps the storage walk single-pass
+        // while letting both runtimes share the downstream sink.
+        let mut out: Vec<([u8; 32], AccountSnapshot)> = Vec::new();
+        match runtime_kind {
+            RuntimeKind::Allfeat => {
+                let mut entries = at
+                    .storage()
+                    .iter(allfeat::storage().system().account(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("iter system.account (genesis): {e}")))?;
+                while let Some(kv) = entries.next().await {
+                    let kv = kv.map_err(|e| {
+                        DataError::Rpc(format!("iter system.account (genesis) next: {e}"))
+                    })?;
+                    let (id,) = kv
+                        .key()
+                        .map_err(|e| {
+                            DataError::Decode(format!("system.account key (genesis): {e}"))
+                        })?
+                        .decode()
+                        .map_err(|e| {
+                            DataError::Decode(format!("decode system.account key (genesis): {e}"))
+                        })?;
+                    let info = kv.value().decode().map_err(|e| {
+                        DataError::Decode(format!("decode AccountInfo (genesis): {e}"))
+                    })?;
+                    let mut account = [0u8; 32];
+                    account.copy_from_slice(id.as_ref());
+                    out.push((
+                        account,
+                        AccountSnapshot {
+                            free: info.data.free,
+                            reserved: info.data.reserved,
+                            frozen: info.data.frozen,
+                            nonce: info.nonce,
+                        },
+                    ));
+                }
+            }
+            RuntimeKind::Melodie => {
+                let mut entries = at
+                    .storage()
+                    .iter(melodie::storage().system().account(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("iter system.account (genesis): {e}")))?;
+                while let Some(kv) = entries.next().await {
+                    let kv = kv.map_err(|e| {
+                        DataError::Rpc(format!("iter system.account (genesis) next: {e}"))
+                    })?;
+                    let (id,) = kv
+                        .key()
+                        .map_err(|e| {
+                            DataError::Decode(format!("system.account key (genesis): {e}"))
+                        })?
+                        .decode()
+                        .map_err(|e| {
+                            DataError::Decode(format!("decode system.account key (genesis): {e}"))
+                        })?;
+                    let info = kv.value().decode().map_err(|e| {
+                        DataError::Decode(format!("decode AccountInfo (genesis): {e}"))
+                    })?;
+                    let mut account = [0u8; 32];
+                    account.copy_from_slice(id.as_ref());
+                    out.push((
+                        account,
+                        AccountSnapshot {
+                            free: info.data.free,
+                            reserved: info.data.reserved,
+                            frozen: info.data.frozen,
+                            nonce: info.nonce,
+                        },
+                    ));
+                }
+            }
         }
         Ok(out)
     })

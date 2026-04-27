@@ -113,7 +113,11 @@ Boot aborts in non-mock builds if **no** `RPC_ENDPOINT_*` is set — nothing to 
 
 ### Subxt metadata
 
-Runtime codegen lives in `src/data/rpc/runtime.rs`: `#[subxt::subxt(runtime_metadata_path = "artifacts/allfeat-metadata.scale")]`. Both networks read through the same `allfeat` module for now — add a sibling `pub mod melodie { ... }` with its own pinned metadata file when Melodie's types diverge. Regeneration scope and command are tracked in the user's memory file `project_metadata_generation.md`.
+Runtime codegen lives in `src/data/rpc/runtime.rs` as two sibling modules — `pub mod allfeat {}` against `artifacts/allfeat-metadata.scale` and `pub mod melodie {}` against `artifacts/melodie-metadata.scale`. The macro is compile-time, so dispatch happens at the call site: every mapper / projection / decoder takes a `runtime_kind: RuntimeKind` (carried by `RpcClient`, sourced from `NetworkSpec.runtime_kind`) and matches on it before reaching into the codegen. Both modules share `SubstrateConfig` (AccountId32 / MultiAddress / BlakeTwo256 / u32), so on-the-wire shapes overlap and only `runtime_types::*` differ between runtimes.
+
+Static metadata + decoders live in `src/data/metadata.rs`: `ALLFEAT_RUNTIME` / `MELODIE_RUNTIME` (`RuntimeMetadata { bytes, version, decoded: LazyLock<Metadata> }`) plus a `runtime_for(network_id)` dispatcher. All public decoders (`decode_event_fields`, `decode_call_args`, `decode_call_fields`, `callable_pallet_names`, `metadata_version_for`, `metadata_bytes_for`) take a `network_id` and route through it.
+
+Regeneration scope and per-chain commands are tracked in the user's memory file `project_metadata_generation.md`.
 
 Default subxt config for this project is `SubstrateConfig`, not `PolkadotConfig` (see `feedback_subxt_config.md`). Always consult `paritytech/subxt`'s `subxt/examples/` when touching subxt code (`reference_subxt_examples.md`).
 

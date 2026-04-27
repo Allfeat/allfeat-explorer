@@ -29,7 +29,7 @@ use crate::domain::{
     EnvelopeId, Extrinsic, Page, PageInfo, PageRequest, RuntimeDetails, RuntimeUpgrade,
     TokenOverview, Transfer,
 };
-use crate::network::ChainCtx;
+use crate::network::{ChainCtx, RuntimeKind};
 
 use super::cache::cached;
 use super::client::{race_timeout, SubxtClient, RpcClient};
@@ -77,6 +77,7 @@ impl ChainData for RpcProvider {
     async fn block_by_number(&self, ctx: ChainCtx, number: u64) -> DataResult<Option<Block>> {
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let finalized_head = finalized_head_number(&client).await?;
         let best_head = best_head_number(&client).await?;
         // Guard against numbers above the current chain tip so absurd queries
@@ -100,7 +101,7 @@ impl ChainData for RpcProvider {
         let hit = cached(cache, "block_by_number", number, async move {
             let api = client_for_load.subxt().await?;
             match race_timeout("at_block", api.at_block(number)).await? {
-                Ok(at) => mappers::map_block(&at, finalized_head, ss58_prefix).await,
+                Ok(at) => mappers::map_block(&at, finalized_head, runtime_kind, ss58_prefix).await,
                 Err(e) if is_block_not_found(&e) => Err(DataError::InvalidPayload(format!(
                     "block {number} pin dropped"
                 ))),
@@ -130,6 +131,7 @@ impl ChainData for RpcProvider {
 
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let cache = &client.caches().latest_blocks;
         let client_for_load = client.clone();
         let best_head_hint = client.best_head();
@@ -179,9 +181,11 @@ impl ChainData for RpcProvider {
                         let api = api.clone();
                         async move {
                             match race_timeout("at_block", api.at_block(number)).await? {
-                                Ok(at) => mappers::map_block(&at, finalized_head, ss58_prefix)
-                                    .await
-                                    .map(Some),
+                                Ok(at) => {
+                                    mappers::map_block(&at, finalized_head, runtime_kind, ss58_prefix)
+                                        .await
+                                        .map(Some)
+                                }
                                 Err(e) if is_block_not_found(&e) => Ok(None),
                                 Err(e) => Err(DataError::Rpc(format!("at_block({number}): {e}"))),
                             }
@@ -233,6 +237,7 @@ impl ChainData for RpcProvider {
     async fn extrinsics_in_block(&self, ctx: ChainCtx, block: u64) -> DataResult<Vec<Extrinsic>> {
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         if block > best_head_number(&client).await? {
             return Ok(Vec::new());
@@ -243,7 +248,7 @@ impl ChainData for RpcProvider {
             let api = client_for_load.subxt().await?;
             match race_timeout("at_block", api.at_block(block)).await? {
                 Ok(at) => {
-                    let timestamp_ms = mappers::fetch_timestamp(&at).await?;
+                    let timestamp_ms = mappers::fetch_timestamp(&at, runtime_kind).await?;
                     let events = mappers::fetch_block_events(&at).await?;
                     let events_by_phase = mappers::index_events_by_phase(&events)?;
                     mappers::map_extrinsics(
@@ -251,6 +256,7 @@ impl ChainData for RpcProvider {
                         timestamp_ms,
                         &events_by_phase,
                         network_id,
+                        runtime_kind,
                         ss58_prefix,
                     )
                     .await
@@ -265,6 +271,7 @@ impl ChainData for RpcProvider {
     async fn events_in_block(&self, ctx: ChainCtx, block: u64) -> DataResult<Vec<BlockEvent>> {
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         if block > best_head_number(&client).await? {
             return Ok(Vec::new());
@@ -275,7 +282,7 @@ impl ChainData for RpcProvider {
             let api = client_for_load.subxt().await?;
             match race_timeout("at_block", api.at_block(block)).await? {
                 Ok(at) => {
-                    let timestamp_ms = mappers::fetch_timestamp(&at).await?;
+                    let timestamp_ms = mappers::fetch_timestamp(&at, runtime_kind).await?;
                     let events = mappers::fetch_block_events(&at).await?;
                     mappers::map_block_events(block, timestamp_ms, &events, network_id, ss58_prefix)
                 }
@@ -300,6 +307,7 @@ impl ChainData for RpcProvider {
 
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         let cache = &client.caches().latest_events;
         let client_for_load = client.clone();
@@ -330,7 +338,7 @@ impl ChainData for RpcProvider {
                     .map(|number| {
                         let api = api.clone();
                         async move {
-                            fetch_block_events_with_ts(&api, number, network_id, ss58_prefix).await
+                            fetch_block_events_with_ts(&api, number, network_id, runtime_kind, ss58_prefix).await
                         }
                     })
                     .buffered(FETCH_CONCURRENCY);
@@ -399,6 +407,7 @@ impl ChainData for RpcProvider {
 
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         let cache = &client.caches().latest_extrinsics;
         let client_for_load = client.clone();
@@ -441,7 +450,7 @@ impl ChainData for RpcProvider {
                     .map(|number| {
                         let api = api.clone();
                         async move {
-                            fetch_block_extrinsics(&api, number, network_id, ss58_prefix).await
+                            fetch_block_extrinsics(&api, number, network_id, runtime_kind, ss58_prefix).await
                         }
                     })
                     .buffered(FETCH_CONCURRENCY);
@@ -503,6 +512,7 @@ impl ChainData for RpcProvider {
         };
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         if block > best_head_number(&client).await? {
             return Ok(None);
@@ -522,7 +532,7 @@ impl ChainData for RpcProvider {
                 }
                 Err(e) => return Err(DataError::Rpc(format!("at_block({block}): {e}"))),
             };
-            let timestamp_ms = mappers::fetch_timestamp(&at).await?;
+            let timestamp_ms = mappers::fetch_timestamp(&at, runtime_kind).await?;
             let events = mappers::fetch_block_events(&at).await?;
             let events_by_phase = mappers::index_events_by_phase(&events)?;
             let all = mappers::map_extrinsics(
@@ -530,6 +540,7 @@ impl ChainData for RpcProvider {
                 timestamp_ms,
                 &events_by_phase,
                 network_id,
+                runtime_kind,
                 ss58_prefix,
             )
             .await?;
@@ -564,6 +575,7 @@ impl ChainData for RpcProvider {
 
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         let cache = &client.caches().latest_transfers;
         let client_for_load = client.clone();
@@ -591,7 +603,7 @@ impl ChainData for RpcProvider {
                     .map(|number| {
                         let api = api.clone();
                         async move {
-                            fetch_block_transfers(&api, number, network_id, ss58_prefix).await
+                            fetch_block_transfers(&api, number, network_id, runtime_kind, ss58_prefix).await
                         }
                     })
                     .buffered(FETCH_CONCURRENCY);
@@ -655,6 +667,7 @@ impl ChainData for RpcProvider {
     ) -> DataResult<Option<Account>> {
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let cache = &client.caches().account_by_address;
         let addr_owned = address.to_string();
         let client_for_load = client.clone();
@@ -667,7 +680,7 @@ impl ChainData for RpcProvider {
                 let at = race_timeout("at_current_block", api.at_current_block())
                     .await?
                     .map_err(|e| DataError::Rpc(format!("at_current_block: {e}")))?;
-                mappers::fetch_account(&at, &addr_owned, ss58_prefix).await
+                mappers::fetch_account(&at, &addr_owned, runtime_kind, ss58_prefix).await
             },
         )
         .await
@@ -676,6 +689,7 @@ impl ChainData for RpcProvider {
     async fn top_accounts(&self, ctx: ChainCtx, count: u32) -> DataResult<Vec<Account>> {
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let cache = &client.caches().top_accounts;
         let client_for_load = client.clone();
         cached(cache, "top_accounts", count, async move {
@@ -683,7 +697,7 @@ impl ChainData for RpcProvider {
             let at = race_timeout("at_current_block", api.at_current_block())
                 .await?
                 .map_err(|e| DataError::Rpc(format!("at_current_block: {e}")))?;
-            mappers::fetch_top_accounts(&at, count, ss58_prefix).await
+            mappers::fetch_top_accounts(&at, count, runtime_kind, ss58_prefix).await
         })
         .await
     }
@@ -691,6 +705,7 @@ impl ChainData for RpcProvider {
     async fn ats_stats(&self, ctx: ChainCtx) -> DataResult<AtsStats> {
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         let cache = &client.caches().ats_stats;
         let client_for_load = client.clone();
@@ -699,7 +714,7 @@ impl ChainData for RpcProvider {
             let at = race_timeout("at_current_block", api.at_current_block())
                 .await?
                 .map_err(|e| DataError::Rpc(format!("at_current_block: {e}")))?;
-            mappers::build_ats_stats(&api, &at, network_id, ss58_prefix).await
+            mappers::build_ats_stats(&api, &at, network_id, runtime_kind, ss58_prefix).await
         })
         .await
     }
@@ -707,6 +722,7 @@ impl ChainData for RpcProvider {
     async fn ats_by_index(&self, ctx: ChainCtx, index: u32) -> DataResult<Option<AtsRecord>> {
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         let cache = &client.caches().ats_by_index;
         let client_for_load = client.clone();
@@ -717,12 +733,13 @@ impl ChainData for RpcProvider {
                 .map_err(|e| DataError::Rpc(format!("at_current_block: {e}")))?;
             // Explorer pages request by "newest-first" position; translate to the
             // on-chain id by subtracting from `NextAtsId`.
-            let next = mappers::fetch_next_ats_id(&at).await?;
+            let next = mappers::fetch_next_ats_id(&at, runtime_kind).await?;
             if next == 0 || index as u64 >= next {
                 return Ok(None);
             }
             let ats_id = next - 1 - index as u64;
-            mappers::build_ats_record(&api, &at, ats_id, network_id, ss58_prefix).await
+            mappers::build_ats_record(&api, &at, ats_id, network_id, runtime_kind, ss58_prefix)
+                .await
         })
         .await
     }
@@ -741,6 +758,7 @@ impl ChainData for RpcProvider {
 
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         let cache = &client.caches().ats_list;
         let client_for_load = client.clone();
@@ -753,7 +771,7 @@ impl ChainData for RpcProvider {
                 let at = race_timeout("at_current_block", api.at_current_block())
                     .await?
                     .map_err(|e| DataError::Rpc(format!("at_current_block: {e}")))?;
-                let next = mappers::fetch_next_ats_id(&at).await?;
+                let next = mappers::fetch_next_ats_id(&at, runtime_kind).await?;
                 // Translate the cursor into the mapper's `from_index`
                 // (position within the newest-first walk). Position of
                 // `id` = `next - 1 - id`; to get rows with `id <
@@ -770,6 +788,7 @@ impl ChainData for RpcProvider {
                     probe,
                     from_index,
                     network_id,
+                    runtime_kind,
                     ss58_prefix,
                 )
                 .await?;
@@ -815,6 +834,7 @@ impl ChainData for RpcProvider {
 
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         let cache = &client.caches().ats_version_feed;
         let client_for_load = client.clone();
@@ -834,8 +854,16 @@ impl ChainData for RpcProvider {
                 // non-indexed networks, which are dev chains with tiny
                 // registries.
                 let buffer = count.saturating_add(count).max(64);
-                let raw =
-                    mappers::build_ats_feed(&api, &at, buffer, 0, network_id, ss58_prefix).await?;
+                let raw = mappers::build_ats_feed(
+                    &api,
+                    &at,
+                    buffer,
+                    0,
+                    network_id,
+                    runtime_kind,
+                    ss58_prefix,
+                )
+                .await?;
                 let mut filtered: Vec<AtsFeedItem> = raw
                     .into_iter()
                     .filter(|item| match cursor {
@@ -885,6 +913,7 @@ impl ChainData for RpcProvider {
         let count = req.count;
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
+        let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
         let cache = &client.caches().account_ats;
         let addr_owned = address.to_string();
@@ -901,7 +930,8 @@ impl ChainData for RpcProvider {
                 // Count here is cheap (just the owner index length) —
                 // use it both for the response `total` and to avoid
                 // over-fetching when the window is narrow.
-                let total = mappers::build_account_ats_count(&at, &addr_owned).await?;
+                let total =
+                    mappers::build_account_ats_count(&at, &addr_owned, runtime_kind).await?;
                 // Same cursor → limit translation as `ats_list`: fetch
                 // the whole owner set (small by construction) and
                 // filter in-memory. `build_account_ats` already returns
@@ -912,6 +942,7 @@ impl ChainData for RpcProvider {
                     &addr_owned,
                     total,
                     network_id,
+                    runtime_kind,
                     ss58_prefix,
                 )
                 .await?;
@@ -1288,11 +1319,12 @@ async fn fetch_block_extrinsics(
     api: &SubxtClient,
     number: u64,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Option<Vec<Extrinsic>>> {
     match race_timeout("at_block", api.at_block(number)).await? {
         Ok(at) => {
-            let timestamp_ms = mappers::fetch_timestamp(&at).await?;
+            let timestamp_ms = mappers::fetch_timestamp(&at, runtime_kind).await?;
             let events = mappers::fetch_block_events(&at).await?;
             let events_by_phase = mappers::index_events_by_phase(&events)?;
             let extrinsics = mappers::map_extrinsics(
@@ -1300,6 +1332,7 @@ async fn fetch_block_extrinsics(
                 timestamp_ms,
                 &events_by_phase,
                 network_id,
+                runtime_kind,
                 ss58_prefix,
             )
             .await?;
@@ -1317,11 +1350,12 @@ async fn fetch_block_events_with_ts(
     api: &SubxtClient,
     number: u64,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Option<Vec<BlockEvent>>> {
     match race_timeout("at_block", api.at_block(number)).await? {
         Ok(at) => {
-            let timestamp_ms = mappers::fetch_timestamp(&at).await?;
+            let timestamp_ms = mappers::fetch_timestamp(&at, runtime_kind).await?;
             let events = mappers::fetch_block_events(&at).await?;
             Ok(Some(mappers::map_block_events(
                 number,
@@ -1344,11 +1378,12 @@ async fn fetch_block_transfers(
     api: &SubxtClient,
     number: u64,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Option<Vec<(Transfer, u32)>>> {
     match race_timeout("at_block", api.at_block(number)).await? {
         Ok(at) => {
-            let timestamp_ms = mappers::fetch_timestamp(&at).await?;
+            let timestamp_ms = mappers::fetch_timestamp(&at, runtime_kind).await?;
             let events = mappers::fetch_block_events(&at).await?;
             let events_by_phase = mappers::index_events_by_phase(&events)?;
             let extrinsics = mappers::map_extrinsics(
@@ -1356,11 +1391,16 @@ async fn fetch_block_transfers(
                 timestamp_ms,
                 &events_by_phase,
                 network_id,
+                runtime_kind,
                 ss58_prefix,
             )
             .await?;
-            let transfers =
-                mappers::map_transfers_with_event_idx(&extrinsics, &events_by_phase, ss58_prefix)?;
+            let transfers = mappers::map_transfers_with_event_idx(
+                &extrinsics,
+                &events_by_phase,
+                runtime_kind,
+                ss58_prefix,
+            )?;
             Ok(Some(transfers))
         }
         Err(e) if is_block_not_found(&e) => Ok(None),

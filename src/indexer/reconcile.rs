@@ -64,6 +64,7 @@ pub async fn reconcile_network(
     pool: PgPool,
 ) -> DataResult<ReconcileReport> {
     let api = client.subxt().await?;
+    let runtime_kind = client.runtime_kind();
     // `at_current_block` pins to the best head at call time. We
     // deliberately don't wait for finalization here: reconciliation is
     // a maintenance sweep, not an indexing commit, and a reorg after
@@ -137,7 +138,7 @@ pub async fn reconcile_network(
             .expect("non-empty by the early-return above")
             .clone();
 
-        let snapshots = fetch_accounts_at(&at, &accounts).await?;
+        let snapshots = fetch_accounts_at(&at, &accounts, runtime_kind).await?;
 
         let mut tx = pool
             .begin()

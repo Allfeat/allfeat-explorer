@@ -1,5 +1,11 @@
 //! ATS pallet mapping: registry fan-out, per-record version walk, stats
 //! aggregation, and the per-owner views.
+//!
+//! `pallet-ats` ships in both runtimes — every public entry point dispatches
+//! on [`RuntimeKind`] to address the matching codegen module, and every
+//! decoded `AtsRecord` / `VersionInfo` is folded into a runtime-neutral view
+//! before crossing the arm boundary so the aggregation logic below stays
+//! single-shape.
 
 use futures::{stream, StreamExt, TryStreamExt};
 use subxt::client::OnlineClientAtBlock;
@@ -8,9 +14,10 @@ use subxt::SubstrateConfig;
 
 use crate::data::error::{DataError, DataResult};
 use crate::data::rpc::client::{with_iter_timeout, with_timeout};
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
 use crate::data::ss58::encode_ss58;
 use crate::domain::{AtsFeedItem, AtsRecord, AtsStats, AtsVersion, Deposit};
+use crate::network::RuntimeKind;
 
 use super::accounts::parse_ss58;
 use super::blocks::fetch_timestamp;
@@ -23,11 +30,31 @@ use super::extrinsics::{extrinsic_id, map_extrinsics};
 /// `FETCH_CONCURRENCY` in the provider for the block scans.
 const ATS_CONCURRENCY: usize = 8;
 
-/// SCALE type for an on-chain ATS registry value. Matches the Melodie runtime's
-/// `pallet_ats::AtsRecord<AccountId, BlockNumber, Balance>` instantiation.
-type OnChainAtsRecord =
-    allfeat::runtime_types::pallet_ats::types::AtsRecord<AccountId32, u32, u128>;
-type OnChainVersionInfo = allfeat::runtime_types::pallet_ats::types::VersionInfo<u32>;
+/// Runtime-neutral projection of `pallet_ats::AtsRecord<AccountId, BlockNumber,
+/// Balance>` after decoding. Each runtime's codegen produces a structurally
+/// identical (but type-distinct) `AtsRecord`; folding into this view at the
+/// fetch boundary lets the aggregation paths stay single-shape.
+pub struct AtsRecordView {
+    pub owner: AccountId32,
+    pub created_at: u32,
+    pub version_count: u32,
+    pub deposits: Vec<DepositEntryView>,
+}
+
+pub struct DepositEntryView {
+    pub depositor: AccountId32,
+    pub amount: u128,
+}
+
+/// Runtime-neutral projection of `pallet_ats::VersionInfo<BlockNumber>`.
+/// `commitment` stays as the on-chain fixed-width array — every consumer
+/// either hex-encodes it (`hex_bytes`) or hashes it, neither of which
+/// benefits from a heap allocation.
+pub struct VersionInfoView {
+    pub created_at: u32,
+    pub commitment: [u8; 32],
+    pub protocol_version: u8,
+}
 
 /// Fallback/resolved "how did this version land on-chain" info that we need
 /// to round-trip from `VersionInfo` (which only stores the commitment + block)
@@ -41,20 +68,43 @@ struct VersionExtras {
 
 /// Pull the auto-incrementing next-ATS-id counter (= total entries ever
 /// created, before any revocations). ValueQuery default is `0`.
-pub async fn fetch_next_ats_id(at: &OnlineClientAtBlock<SubstrateConfig>) -> DataResult<u64> {
-    let value = with_timeout("fetch_next_ats_id", async {
-        at.storage()
-            .try_fetch(allfeat::storage().ats().next_ats_id(), ())
-            .await
-            .map_err(|e| DataError::Rpc(format!("fetch next_ats_id: {e}")))
-    })
-    .await?;
-    let Some(value) = value else {
-        return Ok(0);
+pub async fn fetch_next_ats_id(
+    at: &OnlineClientAtBlock<SubstrateConfig>,
+    runtime_kind: RuntimeKind,
+) -> DataResult<u64> {
+    let decoded: u64 = match runtime_kind {
+        RuntimeKind::Allfeat => {
+            let value = with_timeout("fetch_next_ats_id", async {
+                at.storage()
+                    .try_fetch(allfeat::storage().ats().next_ats_id(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch next_ats_id: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(0);
+            };
+            value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode next_ats_id: {e}")))?
+        }
+        RuntimeKind::Melodie => {
+            let value = with_timeout("fetch_next_ats_id", async {
+                at.storage()
+                    .try_fetch(melodie::storage().ats().next_ats_id(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch next_ats_id: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(0);
+            };
+            value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode next_ats_id: {e}")))?
+        }
     };
-    value
-        .decode()
-        .map_err(|e| DataError::Decode(format!("decode next_ats_id: {e}")))
+    Ok(decoded)
 }
 
 /// Fetch the on-chain registry entry for `ats_id`, or `None` when the entry
@@ -62,21 +112,77 @@ pub async fn fetch_next_ats_id(at: &OnlineClientAtBlock<SubstrateConfig>) -> Dat
 pub async fn fetch_ats_registry_entry(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     ats_id: u64,
-) -> DataResult<Option<OnChainAtsRecord>> {
-    let value = with_timeout("fetch_ats_registry_entry", async {
-        at.storage()
-            .try_fetch(allfeat::storage().ats().ats_registry(), (ats_id,))
-            .await
-            .map_err(|e| DataError::Rpc(format!("fetch ats_registry({ats_id}): {e}")))
-    })
-    .await?;
-    let Some(value) = value else {
-        return Ok(None);
+    runtime_kind: RuntimeKind,
+) -> DataResult<Option<AtsRecordView>> {
+    let view = match runtime_kind {
+        RuntimeKind::Allfeat => {
+            let value = with_timeout("fetch_ats_registry_entry", async {
+                at.storage()
+                    .try_fetch(allfeat::storage().ats().ats_registry(), (ats_id,))
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch ats_registry({ats_id}): {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(None);
+            };
+            let record: allfeat::runtime_types::pallet_ats::types::AtsRecord<
+                AccountId32,
+                u32,
+                u128,
+            > = value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode AtsRecord: {e}")))?;
+            AtsRecordView {
+                owner: record.owner,
+                created_at: record.created_at,
+                version_count: record.version_count,
+                deposits: record
+                    .deposits
+                    .0
+                    .into_iter()
+                    .map(|entry| DepositEntryView {
+                        depositor: entry.depositor,
+                        amount: entry.amount,
+                    })
+                    .collect(),
+            }
+        }
+        RuntimeKind::Melodie => {
+            let value = with_timeout("fetch_ats_registry_entry", async {
+                at.storage()
+                    .try_fetch(melodie::storage().ats().ats_registry(), (ats_id,))
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch ats_registry({ats_id}): {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(None);
+            };
+            let record: melodie::runtime_types::pallet_ats::types::AtsRecord<
+                AccountId32,
+                u32,
+                u128,
+            > = value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode AtsRecord: {e}")))?;
+            AtsRecordView {
+                owner: record.owner,
+                created_at: record.created_at,
+                version_count: record.version_count,
+                deposits: record
+                    .deposits
+                    .0
+                    .into_iter()
+                    .map(|entry| DepositEntryView {
+                        depositor: entry.depositor,
+                        amount: entry.amount,
+                    })
+                    .collect(),
+            }
+        }
     };
-    value
-        .decode()
-        .map(Some)
-        .map_err(|e| DataError::Decode(format!("decode AtsRecord: {e}")))
+    Ok(Some(view))
 }
 
 /// Stream the `(version, VersionInfo)` pairs stored under a single ATS id.
@@ -85,27 +191,67 @@ pub async fn fetch_ats_registry_entry(
 pub async fn fetch_ats_versions(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     ats_id: u64,
-) -> DataResult<Vec<(u32, OnChainVersionInfo)>> {
+    runtime_kind: RuntimeKind,
+) -> DataResult<Vec<(u32, VersionInfoView)>> {
     with_iter_timeout("fetch_ats_versions", async {
-        let mut entries = at
-            .storage()
-            .iter(allfeat::storage().ats().ats_versions(), (ats_id,))
-            .await
-            .map_err(|e| DataError::Rpc(format!("iter ats_versions({ats_id}): {e}")))?;
-
-        let mut out = Vec::new();
-        while let Some(kv) = entries.next().await {
-            let kv = kv.map_err(|e| DataError::Rpc(format!("iter ats_versions next: {e}")))?;
-            let (_, v) = kv
-                .key()
-                .map_err(|e| DataError::Decode(format!("ats_versions key: {e}")))?
-                .decode()
-                .map_err(|e| DataError::Decode(format!("decode ats_versions key: {e}")))?;
-            let info = kv
-                .value()
-                .decode()
-                .map_err(|e| DataError::Decode(format!("decode VersionInfo: {e}")))?;
-            out.push((v, info));
+        let mut out: Vec<(u32, VersionInfoView)> = Vec::new();
+        match runtime_kind {
+            RuntimeKind::Allfeat => {
+                let mut entries = at
+                    .storage()
+                    .iter(allfeat::storage().ats().ats_versions(), (ats_id,))
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("iter ats_versions({ats_id}): {e}")))?;
+                while let Some(kv) = entries.next().await {
+                    let kv = kv
+                        .map_err(|e| DataError::Rpc(format!("iter ats_versions next: {e}")))?;
+                    let (_, v) = kv
+                        .key()
+                        .map_err(|e| DataError::Decode(format!("ats_versions key: {e}")))?
+                        .decode()
+                        .map_err(|e| DataError::Decode(format!("decode ats_versions key: {e}")))?;
+                    let info: allfeat::runtime_types::pallet_ats::types::VersionInfo<u32> = kv
+                        .value()
+                        .decode()
+                        .map_err(|e| DataError::Decode(format!("decode VersionInfo: {e}")))?;
+                    out.push((
+                        v,
+                        VersionInfoView {
+                            created_at: info.created_at,
+                            commitment: info.commitment,
+                            protocol_version: info.protocol_version,
+                        },
+                    ));
+                }
+            }
+            RuntimeKind::Melodie => {
+                let mut entries = at
+                    .storage()
+                    .iter(melodie::storage().ats().ats_versions(), (ats_id,))
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("iter ats_versions({ats_id}): {e}")))?;
+                while let Some(kv) = entries.next().await {
+                    let kv = kv
+                        .map_err(|e| DataError::Rpc(format!("iter ats_versions next: {e}")))?;
+                    let (_, v) = kv
+                        .key()
+                        .map_err(|e| DataError::Decode(format!("ats_versions key: {e}")))?
+                        .decode()
+                        .map_err(|e| DataError::Decode(format!("decode ats_versions key: {e}")))?;
+                    let info: melodie::runtime_types::pallet_ats::types::VersionInfo<u32> = kv
+                        .value()
+                        .decode()
+                        .map_err(|e| DataError::Decode(format!("decode VersionInfo: {e}")))?;
+                    out.push((
+                        v,
+                        VersionInfoView {
+                            created_at: info.created_at,
+                            commitment: info.commitment,
+                            protocol_version: info.protocol_version,
+                        },
+                    ));
+                }
+            }
         }
         out.sort_by_key(|(v, _)| *v);
         Ok(out)
@@ -118,21 +264,46 @@ pub async fn fetch_ats_versions(
 pub async fn fetch_owner_index(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     owner: &AccountId32,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<Vec<u64>> {
-    let value = with_timeout("fetch_owner_index", async {
-        at.storage()
-            .try_fetch(allfeat::storage().ats().owner_index(), (*owner,))
-            .await
-            .map_err(|e| DataError::Rpc(format!("fetch owner_index: {e}")))
-    })
-    .await?;
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let bounded: allfeat::runtime_types::bounded_collections::bounded_vec::BoundedVec<u64> = value
-        .decode()
-        .map_err(|e| DataError::Decode(format!("decode owner_index: {e}")))?;
-    Ok(bounded.0)
+    match runtime_kind {
+        RuntimeKind::Allfeat => {
+            let value = with_timeout("fetch_owner_index", async {
+                at.storage()
+                    .try_fetch(allfeat::storage().ats().owner_index(), (*owner,))
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch owner_index: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(Vec::new());
+            };
+            let bounded: allfeat::runtime_types::bounded_collections::bounded_vec::BoundedVec<
+                u64,
+            > = value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode owner_index: {e}")))?;
+            Ok(bounded.0)
+        }
+        RuntimeKind::Melodie => {
+            let value = with_timeout("fetch_owner_index", async {
+                at.storage()
+                    .try_fetch(melodie::storage().ats().owner_index(), (*owner,))
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch owner_index: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(Vec::new());
+            };
+            let bounded: melodie::runtime_types::bounded_collections::bounded_vec::BoundedVec<
+                u64,
+            > = value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode owner_index: {e}")))?;
+            Ok(bounded.0)
+        }
+    }
 }
 
 /// Resolve the extrinsic extras (fee, signer, index, timestamp) for a version
@@ -148,13 +319,21 @@ async fn fetch_version_extras(
     version: u32,
     owner: &AccountId32,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<VersionExtras> {
-    let timestamp_ms = fetch_timestamp(at).await?;
+    let timestamp_ms = fetch_timestamp(at, runtime_kind).await?;
     let events = fetch_block_events(at).await?;
     let events_by_phase = index_events_by_phase(&events)?;
-    let extrinsics =
-        map_extrinsics(at, timestamp_ms, &events_by_phase, network_id, ss58_prefix).await?;
+    let extrinsics = map_extrinsics(
+        at,
+        timestamp_ms,
+        &events_by_phase,
+        network_id,
+        runtime_kind,
+        ss58_prefix,
+    )
+    .await?;
 
     // Walk the phase-indexed events to find the AtsCreated / AtsUpdated that
     // matches `(ats_id, version)`. The outer key already carries the extrinsic
@@ -162,13 +341,28 @@ async fn fetch_version_extras(
     let mut extrinsic_index: Option<u32> = None;
     'outer: for (idx, evt_slice) in &events_by_phase {
         for evt in evt_slice {
-            let matches = match (evt.pallet_name(), evt.event_name(), version) {
-                ("Ats", "AtsCreated", 0) => evt
+            if evt.pallet_name() != "Ats" {
+                continue;
+            }
+            // Both `AtsCreated` and `AtsUpdated` carry `(ats_id, version)` —
+            // the per-runtime codegen produces type-distinct shapes, so each
+            // arm decodes into its own variant and lowers to a `bool` match
+            // signal before exiting.
+            let matches = match (evt.event_name(), version, runtime_kind) {
+                ("AtsCreated", 0, RuntimeKind::Allfeat) => evt
                     .decode_fields_unchecked_as::<allfeat::ats::events::AtsCreated>()
                     .map(|ev| ev.ats_id == ats_id)
                     .unwrap_or(false),
-                ("Ats", "AtsUpdated", v) if v > 0 => evt
+                ("AtsCreated", 0, RuntimeKind::Melodie) => evt
+                    .decode_fields_unchecked_as::<melodie::ats::events::AtsCreated>()
+                    .map(|ev| ev.ats_id == ats_id)
+                    .unwrap_or(false),
+                ("AtsUpdated", v, RuntimeKind::Allfeat) if v > 0 => evt
                     .decode_fields_unchecked_as::<allfeat::ats::events::AtsUpdated>()
+                    .map(|ev| ev.ats_id == ats_id && ev.version == version)
+                    .unwrap_or(false),
+                ("AtsUpdated", v, RuntimeKind::Melodie) if v > 0 => evt
+                    .decode_fields_unchecked_as::<melodie::ats::events::AtsUpdated>()
                     .map(|ev| ev.ats_id == ats_id && ev.version == version)
                     .unwrap_or(false),
                 _ => false,
@@ -218,12 +412,13 @@ pub async fn build_ats_record(
     at_tip: &OnlineClientAtBlock<SubstrateConfig>,
     ats_id: u64,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Option<AtsRecord>> {
-    let Some(record) = fetch_ats_registry_entry(at_tip, ats_id).await? else {
+    let Some(record) = fetch_ats_registry_entry(at_tip, ats_id, runtime_kind).await? else {
         return Ok(None);
     };
-    let versions_raw = fetch_ats_versions(at_tip, ats_id).await?;
+    let versions_raw = fetch_ats_versions(at_tip, ats_id, runtime_kind).await?;
 
     let mut versions = Vec::with_capacity(versions_raw.len());
     let mut created_at_ms: i64 = 0;
@@ -248,6 +443,7 @@ pub async fn build_ats_record(
                     v_idx,
                     &record.owner,
                     network_id,
+                    runtime_kind,
                     ss58_prefix,
                 )
                 .await?
@@ -277,7 +473,6 @@ pub async fn build_ats_record(
 
     let deposits: Vec<Deposit> = record
         .deposits
-        .0
         .iter()
         .map(|entry| Deposit {
             address: encode_ss58(&entry.depositor.0, ss58_prefix),
@@ -313,17 +508,18 @@ pub async fn build_ats_list(
     count: u32,
     from_index: u32,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Vec<AtsRecord>> {
     if count == 0 {
         return Ok(Vec::new());
     }
-    let next = fetch_next_ats_id(at_tip).await?;
+    let next = fetch_next_ats_id(at_tip, runtime_kind).await?;
     if next == 0 {
         return Ok(Vec::new());
     }
 
-    let mut stream = fan_out_ats_records(api, at_tip, next, network_id, ss58_prefix);
+    let mut stream = fan_out_ats_records(api, at_tip, next, network_id, runtime_kind, ss58_prefix);
     let mut out = Vec::with_capacity(count as usize);
     let mut skipped: u32 = 0;
     while let Some(rec) = stream.next().await.transpose()? {
@@ -350,6 +546,7 @@ fn fan_out_ats_records<'a>(
     at_tip: &'a OnlineClientAtBlock<SubstrateConfig>,
     next: u64,
     network_id: &'a str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> impl futures::Stream<Item = DataResult<Option<AtsRecord>>> + 'a {
     // `next` is one past the last-allocated id. Iterate `[0, next)` in
@@ -358,7 +555,9 @@ fn fan_out_ats_records<'a>(
         .map(move |id| {
             let api = api.clone();
             let at_tip = at_tip.clone();
-            async move { build_ats_record(&api, &at_tip, id, network_id, ss58_prefix).await }
+            async move {
+                build_ats_record(&api, &at_tip, id, network_id, runtime_kind, ss58_prefix).await
+            }
         })
         .buffered(ATS_CONCURRENCY)
 }
@@ -372,17 +571,18 @@ pub async fn build_ats_feed(
     count: u32,
     from_index: u32,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Vec<AtsFeedItem>> {
     if count == 0 {
         return Ok(Vec::new());
     }
-    let next = fetch_next_ats_id(at_tip).await?;
+    let next = fetch_next_ats_id(at_tip, runtime_kind).await?;
     if next == 0 {
         return Ok(Vec::new());
     }
 
-    let mut stream = fan_out_ats_records(api, at_tip, next, network_id, ss58_prefix);
+    let mut stream = fan_out_ats_records(api, at_tip, next, network_id, runtime_kind, ss58_prefix);
     let mut out = Vec::with_capacity(count as usize);
     let mut skipped: u32 = 0;
     while let Some(rec) = stream.next().await.transpose()? {
@@ -430,11 +630,12 @@ pub async fn build_ats_feed(
 pub async fn build_account_ats_count(
     at_tip: &OnlineClientAtBlock<SubstrateConfig>,
     address: &str,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<u32> {
     let Some(id) = parse_ss58(address) else {
         return Ok(0);
     };
-    let ids = fetch_owner_index(at_tip, &id).await?;
+    let ids = fetch_owner_index(at_tip, &id, runtime_kind).await?;
     Ok(ids.len() as u32)
 }
 
@@ -445,6 +646,7 @@ pub async fn build_account_ats(
     address: &str,
     limit: u32,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Vec<AtsRecord>> {
     if limit == 0 {
@@ -453,7 +655,7 @@ pub async fn build_account_ats(
     let Some(owner) = parse_ss58(address) else {
         return Ok(Vec::new());
     };
-    let mut ids = fetch_owner_index(at_tip, &owner).await?;
+    let mut ids = fetch_owner_index(at_tip, &owner, runtime_kind).await?;
     ids.sort_by(|a, b| b.cmp(a)); // newest first (higher id = more recent)
     ids.truncate(limit as usize);
 
@@ -462,7 +664,9 @@ pub async fn build_account_ats(
         .map(|id| {
             let api = api.clone();
             let at_tip = at_tip.clone();
-            async move { build_ats_record(&api, &at_tip, id, network_id, ss58_prefix).await }
+            async move {
+                build_ats_record(&api, &at_tip, id, network_id, runtime_kind, ss58_prefix).await
+            }
         })
         .buffered(ATS_CONCURRENCY)
         .try_collect()
@@ -476,10 +680,11 @@ pub async fn build_ats_stats(
     api: &crate::data::rpc::client::SubxtClient,
     at_tip: &OnlineClientAtBlock<SubstrateConfig>,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<AtsStats> {
-    let now_ms = fetch_timestamp(at_tip).await?;
-    let next = fetch_next_ats_id(at_tip).await?;
+    let now_ms = fetch_timestamp(at_tip, runtime_kind).await?;
+    let next = fetch_next_ats_id(at_tip, runtime_kind).await?;
 
     let mut total: u32 = 0;
     let mut total_versions: u32 = 0;
@@ -500,7 +705,8 @@ pub async fn build_ats_stats(
         // Walk the whole registry in parallel — stats are the hottest of the
         // ATS pages, and the aggregation below is pure-CPU so we can feed it
         // as fast as the buffered stream yields results.
-        let mut stream = fan_out_ats_records(api, at_tip, next, network_id, ss58_prefix);
+        let mut stream =
+            fan_out_ats_records(api, at_tip, next, network_id, runtime_kind, ss58_prefix);
         while let Some(rec) = stream.next().await.transpose()? {
             let Some(rec) = rec else {
                 continue;

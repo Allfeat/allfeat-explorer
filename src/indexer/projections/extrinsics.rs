@@ -31,7 +31,8 @@ use subxt::SubstrateConfig;
 use crate::data::error::{DataError, DataResult};
 use crate::data::rpc::client::with_timeout;
 use crate::data::rpc::mappers::{fetch_block_events, index_events_by_phase};
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
+use crate::network::RuntimeKind;
 
 /// Row shape for `extrinsics`. Field order mirrors the `INSERT`
 /// statement in [`crate::indexer::sink::insert_extrinsics`]; adding a
@@ -81,6 +82,7 @@ pub struct ExtrinsicRow {
 pub async fn map(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     block_num: u64,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<Vec<ExtrinsicRow>> {
     let extrinsics = with_timeout("map_extrinsics_fetch", async {
         at.extrinsics()
@@ -111,7 +113,7 @@ pub async fn map(
             .unwrap_or((None, None));
 
         let (success, error_module, error_name, fee) = match events_by_phase.get(&idx) {
-            Some(evts) => resolve_outcome(evts, &metadata),
+            Some(evts) => resolve_outcome(evts, &metadata, runtime_kind),
             None => (true, None, None, 0),
         };
 
@@ -150,6 +152,7 @@ pub async fn map(
 fn resolve_outcome(
     evts: &[subxt::events::Event<'_, SubstrateConfig>],
     metadata: &subxt::Metadata,
+    runtime_kind: RuntimeKind,
 ) -> (bool, Option<String>, Option<String>, u128) {
     let mut success = true;
     let mut error_module = None;
@@ -160,20 +163,64 @@ fn resolve_outcome(
         match (evt.pallet_name(), evt.event_name()) {
             ("System", "ExtrinsicFailed") => {
                 success = false;
-                if let Ok(failed) = evt
-                    .decode_fields_unchecked_as::<allfeat::system::events::ExtrinsicFailed>()
-                {
-                    if let (Some(module), Some(name)) = resolve_module_error(&failed.dispatch_error, metadata) {
-                        error_module = Some(module);
-                        error_name = Some(name);
-                    }
+                // Each runtime arm decodes against its own codegen
+                // `ExtrinsicFailed`/`DispatchError` and folds the
+                // `Module(ModuleError)` variant into the runtime-neutral
+                // `(pallet_index, variant_index)` tuple before crossing
+                // the arm boundary. Non-Module variants surface as `None`
+                // and leave the columns `NULL` (caller already flipped
+                // `success`).
+                let module_indices: Option<(u8, u8)> = match runtime_kind {
+                    RuntimeKind::Allfeat => evt
+                        .decode_fields_unchecked_as::<allfeat::system::events::ExtrinsicFailed>()
+                        .ok()
+                        .and_then(|failed| {
+                            use allfeat::runtime_types::sp_runtime::DispatchError as E;
+                            if let E::Module(m) = failed.dispatch_error {
+                                Some((m.index, m.error[0]))
+                            } else {
+                                None
+                            }
+                        }),
+                    RuntimeKind::Melodie => evt
+                        .decode_fields_unchecked_as::<melodie::system::events::ExtrinsicFailed>()
+                        .ok()
+                        .and_then(|failed| {
+                            use melodie::runtime_types::sp_runtime::DispatchError as E;
+                            if let E::Module(m) = failed.dispatch_error {
+                                Some((m.index, m.error[0]))
+                            } else {
+                                None
+                            }
+                        }),
+                };
+                if let Some((pallet_idx, variant_idx)) = module_indices {
+                    let (module, name) =
+                        resolve_module_error(pallet_idx, variant_idx, metadata);
+                    error_module = module;
+                    error_name = name;
                 }
             }
             ("TransactionPayment", "TransactionFeePaid") => {
-                if let Ok(paid) = evt
-                    .decode_fields_unchecked_as::<allfeat::transaction_payment::events::TransactionFeePaid>()
-                {
-                    fee = paid.actual_fee;
+                // SCALE shape is identical (`who`, `actual_fee`, `tip`)
+                // across runtimes; only the Rust type differs. Pull
+                // `actual_fee` out per arm before recombining.
+                let actual_fee = match runtime_kind {
+                    RuntimeKind::Allfeat => evt
+                        .decode_fields_unchecked_as::<
+                            allfeat::transaction_payment::events::TransactionFeePaid,
+                        >()
+                        .ok()
+                        .map(|paid| paid.actual_fee),
+                    RuntimeKind::Melodie => evt
+                        .decode_fields_unchecked_as::<
+                            melodie::transaction_payment::events::TransactionFeePaid,
+                        >()
+                        .ok()
+                        .map(|paid| paid.actual_fee),
+                };
+                if let Some(actual_fee) = actual_fee {
+                    fee = actual_fee;
                 }
             }
             _ => {}
@@ -184,25 +231,24 @@ fn resolve_outcome(
 }
 
 /// Best-effort `(pallet_name, error_variant_name)` lookup for a
-/// `DispatchError::Module`. Returns `(None, None)` for any other
-/// dispatch variant or when the metadata can't resolve one of the
-/// indices — the caller treats that as "known failed, reason opaque"
-/// and leaves the columns `NULL`.
+/// `DispatchError::Module`. The caller has already extracted
+/// `(pallet_index, variant_index)` from the runtime-typed error; this
+/// resolver is runtime-neutral and just queries the metadata. Returns
+/// `(Some(pallet), None)` if the pallet resolves but the variant
+/// doesn't, `(None, None)` if neither resolves — the read layer renders
+/// "failed" either way.
 fn resolve_module_error(
-    err: &allfeat::runtime_types::sp_runtime::DispatchError,
+    pallet_index: u8,
+    variant_index: u8,
     metadata: &subxt::Metadata,
 ) -> (Option<String>, Option<String>) {
-    use allfeat::runtime_types::sp_runtime::DispatchError as E;
-    let E::Module(m) = err else {
-        return (None, None);
-    };
-    let Some(pallet) = metadata.pallet_by_error_index(m.index) else {
+    let Some(pallet) = metadata.pallet_by_error_index(pallet_index) else {
         return (None, None);
     };
     // `ModuleError::error` is a 4-byte padded buffer: the first byte
     // is the variant index, the rest are reserved for future nested
     // error encodings we don't use yet.
-    let Some(variant) = pallet.error_variant_by_index(m.error[0]) else {
+    let Some(variant) = pallet.error_variant_by_index(variant_index) else {
         return (Some(pallet.name().to_string()), None);
     };
     (Some(pallet.name().to_string()), Some(variant.name.clone()))
@@ -297,18 +343,18 @@ mod tests {
         assert_eq!(row.args_scale, vec![1, 2, 3]);
     }
 
-    /// Guard the "failed with a non-Module dispatch" branch: we flip
-    /// `success = false` but leave `error_module` / `error_name` both
-    /// `None` because there's no pallet/variant to resolve. Locks the
-    /// contract the queries layer relies on — a NULL `error_module`
-    /// column means "failed for an opaque reason", not "no failure".
+    /// Guard the "module index doesn't resolve" branch: a pallet index
+    /// outside the metadata returns `(None, None)` and the columns end
+    /// up `NULL`. Locks the contract the queries layer relies on — a
+    /// NULL `error_module` column means "failed for an opaque reason",
+    /// not "no failure".
     #[test]
-    fn resolve_module_error_returns_none_for_non_module_variants() {
-        use allfeat::runtime_types::sp_runtime::DispatchError as E;
-
+    fn resolve_module_error_returns_none_for_unknown_pallet_index() {
         let metadata = load_test_metadata();
-        // `BadOrigin` is a unit variant — no data to resolve.
-        let (m, n) = resolve_module_error(&E::BadOrigin, &metadata);
+        // 255 is well past any real pallet index in the runtime; a
+        // future runtime that genuinely uses 255 still wouldn't have
+        // variant 255, so the fallback path is exercised either way.
+        let (m, n) = resolve_module_error(255, 255, &metadata);
         assert!(m.is_none() && n.is_none());
     }
 

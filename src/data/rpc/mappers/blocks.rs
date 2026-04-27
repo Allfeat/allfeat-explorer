@@ -9,9 +9,10 @@ use subxt::SubstrateConfig;
 
 use crate::data::error::{DataError, DataResult};
 use crate::data::rpc::client::with_timeout;
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
 use crate::data::ss58::{encode_ss58, short_label};
 use crate::domain::Block;
+use crate::network::RuntimeKind;
 
 use super::common::{fetch_block_events, hash_string};
 
@@ -45,6 +46,7 @@ pub fn author_from_slot(slot: u64, validators: &[AccountId32]) -> Option<&Accoun
 pub async fn map_block(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     finalized_head: u64,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Block> {
     let header = with_timeout("block_header", async {
@@ -57,11 +59,11 @@ pub async fn map_block(
     let number = at.block_number();
     let hash = at.block_hash();
 
-    let timestamp_ms = fetch_timestamp(at).await?;
+    let timestamp_ms = fetch_timestamp(at, runtime_kind).await?;
     let (extrinsic_count, size_extrinsics) = fetch_extrinsics_summary(at).await?;
     let event_count = fetch_event_count(at).await?;
-    let (author, author_name) = resolve_author(at, &header.digest, ss58_prefix).await?;
-    let (ref_time, proof_size, ref_time_pct) = fetch_weights(at).await?;
+    let (author, author_name) = resolve_author(at, &header.digest, runtime_kind, ss58_prefix).await?;
+    let (ref_time, proof_size, ref_time_pct) = fetch_weights(at, runtime_kind).await?;
 
     let size_bytes = (header.encoded_size() + size_extrinsics) as u32;
 
@@ -85,22 +87,47 @@ pub async fn map_block(
     })
 }
 
-pub async fn fetch_timestamp(at: &OnlineClientAtBlock<SubstrateConfig>) -> DataResult<i64> {
+pub async fn fetch_timestamp(
+    at: &OnlineClientAtBlock<SubstrateConfig>,
+    runtime_kind: RuntimeKind,
+) -> DataResult<i64> {
     // `Timestamp::Now` is set by the inherent at the start of every block.
     // Genesis (#0) has no inherent yet, so the entry is missing — use 0.
-    let value = with_timeout("fetch_timestamp", async {
-        at.storage()
-            .try_fetch(allfeat::storage().timestamp().now(), ())
-            .await
-            .map_err(|e| DataError::Rpc(format!("fetch timestamp: {e}")))
-    })
-    .await?;
-    let Some(value) = value else {
-        return Ok(0);
+    // Both runtimes encode `Timestamp::Now` as `u64`; only the codegen
+    // address type differs, so each arm decodes into the same `u64` and we
+    // fold to `i64` after the match.
+    let now: u64 = match runtime_kind {
+        RuntimeKind::Allfeat => {
+            let value = with_timeout("fetch_timestamp", async {
+                at.storage()
+                    .try_fetch(allfeat::storage().timestamp().now(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch timestamp: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(0);
+            };
+            value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode timestamp: {e}")))?
+        }
+        RuntimeKind::Melodie => {
+            let value = with_timeout("fetch_timestamp", async {
+                at.storage()
+                    .try_fetch(melodie::storage().timestamp().now(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch timestamp: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(0);
+            };
+            value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode timestamp: {e}")))?
+        }
     };
-    let now: u64 = value
-        .decode()
-        .map_err(|e| DataError::Decode(format!("decode timestamp: {e}")))?;
     Ok(now as i64)
 }
 
@@ -133,6 +160,7 @@ async fn fetch_event_count(at: &OnlineClientAtBlock<SubstrateConfig>) -> DataRes
 async fn resolve_author(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     digest: &Digest,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<(String, String)> {
     let Some(slot) = aura_slot(digest) else {
@@ -145,20 +173,38 @@ async fn resolve_author(
     // authority set (pallet-aura's `OneSessionHandler::on_new_session` maps
     // validators → session keys in order), so the same `slot % len` index
     // lands on the producing validator's actual account.
-    let validators_value = with_timeout("fetch_session_validators", async {
-        at.storage()
-            .try_fetch(allfeat::storage().session().validators(), ())
-            .await
-            .map_err(|e| DataError::Rpc(format!("fetch session validators: {e}")))
-    })
-    .await?;
-    let Some(validators_value) = validators_value else {
-        return Ok((String::from("unknown"), String::from("unknown")));
+    let validators: Vec<AccountId32> = match runtime_kind {
+        RuntimeKind::Allfeat => {
+            let value = with_timeout("fetch_session_validators", async {
+                at.storage()
+                    .try_fetch(allfeat::storage().session().validators(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch session validators: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok((String::from("unknown"), String::from("unknown")));
+            };
+            value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode session validators: {e}")))?
+        }
+        RuntimeKind::Melodie => {
+            let value = with_timeout("fetch_session_validators", async {
+                at.storage()
+                    .try_fetch(melodie::storage().session().validators(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch session validators: {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok((String::from("unknown"), String::from("unknown")));
+            };
+            value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode session validators: {e}")))?
+        }
     };
-
-    let validators: Vec<AccountId32> = validators_value
-        .decode()
-        .map_err(|e| DataError::Decode(format!("decode session validators: {e}")))?;
 
     let Some(author_id) = author_from_slot(slot, &validators) else {
         return Ok((String::from("unknown"), String::from("unknown")));
@@ -171,60 +217,98 @@ async fn resolve_author(
     Ok((address, short_name))
 }
 
+/// Plain `(ref_time, proof_size)` pair. Each `match runtime_kind` arm folds
+/// its codegen-typed `Weight` value into this neutral tuple before crossing
+/// the arm boundary so the downstream arithmetic stays runtime-agnostic.
+type WeightPair = (u64, u64);
+
 pub async fn fetch_weights(
     at: &OnlineClientAtBlock<SubstrateConfig>,
+    runtime_kind: RuntimeKind,
 ) -> DataResult<(u64, u64, u8)> {
-    use allfeat::runtime_types::sp_weights::weight_v2::Weight;
+    let (total, max_block) = match runtime_kind {
+        RuntimeKind::Allfeat => {
+            use allfeat::runtime_types::frame_support::dispatch::PerDispatchClass;
+            use allfeat::runtime_types::sp_weights::weight_v2::Weight;
 
-    let consumed_value = with_timeout("fetch_block_weight", async {
-        at.storage()
-            .try_fetch(allfeat::storage().system().block_weight(), ())
-            .await
-            .map_err(|e| DataError::Rpc(format!("fetch block weight: {e}")))
-    })
-    .await?;
-    let Some(consumed_value) = consumed_value else {
-        return Ok((0, 0, 0));
+            let consumed_value = with_timeout("fetch_block_weight", async {
+                at.storage()
+                    .try_fetch(allfeat::storage().system().block_weight(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch block weight: {e}")))
+            })
+            .await?;
+            let Some(consumed_value) = consumed_value else {
+                return Ok((0, 0, 0));
+            };
+            let consumed: PerDispatchClass<Weight> = consumed_value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode block weight: {e}")))?;
+            let total: WeightPair = (
+                consumed
+                    .normal
+                    .ref_time
+                    .saturating_add(consumed.operational.ref_time)
+                    .saturating_add(consumed.mandatory.ref_time),
+                consumed
+                    .normal
+                    .proof_size
+                    .saturating_add(consumed.operational.proof_size)
+                    .saturating_add(consumed.mandatory.proof_size),
+            );
+            let max_block = at
+                .constants()
+                .entry(allfeat::constants().system().block_weights())
+                .map(|bws| bws.max_block.ref_time)
+                .unwrap_or(0);
+            (total, max_block)
+        }
+        RuntimeKind::Melodie => {
+            use melodie::runtime_types::frame_support::dispatch::PerDispatchClass;
+            use melodie::runtime_types::sp_weights::weight_v2::Weight;
+
+            let consumed_value = with_timeout("fetch_block_weight", async {
+                at.storage()
+                    .try_fetch(melodie::storage().system().block_weight(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch block weight: {e}")))
+            })
+            .await?;
+            let Some(consumed_value) = consumed_value else {
+                return Ok((0, 0, 0));
+            };
+            let consumed: PerDispatchClass<Weight> = consumed_value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode block weight: {e}")))?;
+            let total: WeightPair = (
+                consumed
+                    .normal
+                    .ref_time
+                    .saturating_add(consumed.operational.ref_time)
+                    .saturating_add(consumed.mandatory.ref_time),
+                consumed
+                    .normal
+                    .proof_size
+                    .saturating_add(consumed.operational.proof_size)
+                    .saturating_add(consumed.mandatory.proof_size),
+            );
+            let max_block = at
+                .constants()
+                .entry(melodie::constants().system().block_weights())
+                .map(|bws| bws.max_block.ref_time)
+                .unwrap_or(0);
+            (total, max_block)
+        }
     };
 
-    let consumed: allfeat::runtime_types::frame_support::dispatch::PerDispatchClass<Weight> =
-        consumed_value
-            .decode()
-            .map_err(|e| DataError::Decode(format!("decode block weight: {e}")))?;
-    let total = sum_weights(&consumed);
-
-    let max_block = at
-        .constants()
-        .entry(allfeat::constants().system().block_weights())
-        .map(|bws| bws.max_block.ref_time)
-        .unwrap_or(0);
-    let pct = total
-        .ref_time
+    let (ref_time, proof_size) = total;
+    let pct = ref_time
         .saturating_mul(100)
         .checked_div(max_block)
         .map(|p| p.min(100) as u8)
         .unwrap_or(0);
 
-    Ok((total.ref_time, total.proof_size, pct))
-}
-
-fn sum_weights(
-    consumed: &allfeat::runtime_types::frame_support::dispatch::PerDispatchClass<
-        allfeat::runtime_types::sp_weights::weight_v2::Weight,
-    >,
-) -> allfeat::runtime_types::sp_weights::weight_v2::Weight {
-    allfeat::runtime_types::sp_weights::weight_v2::Weight {
-        ref_time: consumed
-            .normal
-            .ref_time
-            .saturating_add(consumed.operational.ref_time)
-            .saturating_add(consumed.mandatory.ref_time),
-        proof_size: consumed
-            .normal
-            .proof_size
-            .saturating_add(consumed.operational.proof_size)
-            .saturating_add(consumed.mandatory.proof_size),
-    }
+    Ok((ref_time, proof_size, pct))
 }
 
 #[allow(dead_code)]

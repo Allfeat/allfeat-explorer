@@ -10,9 +10,10 @@ use subxt::SubstrateConfig;
 
 use crate::data::error::{DataError, DataResult};
 use crate::data::rpc::client::{with_iter_timeout, with_timeout};
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
 use crate::data::ss58::encode_ss58;
 use crate::domain::{Account, Balance};
+use crate::network::RuntimeKind;
 
 /// Bounded concurrency for the per-block `System::Account` fan-out. A
 /// conservative cap — each block typically touches a handful of accounts
@@ -41,6 +42,19 @@ pub struct AccountSnapshot {
     pub nonce: u32,
 }
 
+/// Runtime-neutral projection of `frame_system::AccountInfo` after the
+/// codegen-typed decode. Each `match runtime_kind` arm folds the codegen
+/// `AccountInfo<u32, AccountData<u128>>` into this view before crossing
+/// the arm boundary so downstream mapping doesn't have to be duplicated
+/// per runtime.
+#[derive(Clone, Copy, Debug)]
+struct AccountInfoView {
+    free: u128,
+    reserved: u128,
+    frozen: u128,
+    nonce: u32,
+}
+
 /// Parse an SS58-encoded address into an `AccountId32`. Returns `None` for any
 /// malformed input (wrong checksum, wrong length, non-SS58). Callers surface
 /// that as `Ok(None)` so the UI shows the standard "not found" page.
@@ -48,30 +62,22 @@ pub fn parse_ss58(addr: &str) -> Option<AccountId32> {
     addr.parse::<AccountId32>().ok()
 }
 
-/// Compose a `crate::domain::Account` from the account id + `AccountInfo` read
-/// off `System::Account`. `first_seen_ms` / `last_active_ms` are left at `0`:
-/// neither is tracked by the runtime, and fabricating values from mock data
-/// on the live path would lie to the UI. Pages render them as "—" today.
-fn map_account_info(
-    id: &AccountId32,
-    info: &allfeat::runtime_types::frame_system::AccountInfo<
-        u32,
-        allfeat::runtime_types::pallet_balances::types::AccountData<u128>,
-    >,
-    ss58_prefix: u16,
-) -> Account {
+/// Compose a `crate::domain::Account` from the account id + the runtime-neutral
+/// `AccountInfoView` projected from `System::Account`. `first_seen_ms` /
+/// `last_active_ms` are left at `0`: neither is tracked by the runtime, and
+/// fabricating values from mock data on the live path would lie to the UI.
+/// Pages render them as "—" today.
+fn map_account_info(id: &AccountId32, info: &AccountInfoView, ss58_prefix: u16) -> Account {
     // On a chain with a fixed supply and no staking, total = free + reserved.
     // `frozen` is a lock (transfer restriction), not a separate bucket — it
     // overlaps with `free` and shouldn't be double-counted.
-    let free = info.data.free;
-    let reserved = info.data.reserved;
-    let total = free.saturating_add(reserved);
+    let total = info.free.saturating_add(info.reserved);
     Account {
         address: encode_ss58(&id.0, ss58_prefix),
         balance: Balance {
             total,
-            transferable: free,
-            reserved,
+            transferable: info.free,
+            reserved: info.reserved,
         },
         nonce: info.nonce,
         first_seen_ms: 0,
@@ -85,25 +91,94 @@ fn map_account_info(
 pub async fn fetch_account(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     address: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Option<Account>> {
     let Some(id) = parse_ss58(address) else {
         return Ok(None);
     };
-    let value = with_timeout("fetch_account", async {
-        at.storage()
-            .try_fetch(allfeat::storage().system().account(), (id,))
-            .await
-            .map_err(|e| DataError::Rpc(format!("fetch system.account({address}): {e}")))
-    })
-    .await?;
-    let Some(value) = value else {
-        return Ok(None);
+    let info = match runtime_kind {
+        RuntimeKind::Allfeat => {
+            let value = with_timeout("fetch_account", async {
+                at.storage()
+                    .try_fetch(allfeat::storage().system().account(), (id,))
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch system.account({address}): {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(None);
+            };
+            let info = value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode AccountInfo: {e}")))?;
+            account_info_view(&info)
+        }
+        RuntimeKind::Melodie => {
+            let value = with_timeout("fetch_account", async {
+                at.storage()
+                    .try_fetch(melodie::storage().system().account(), (id,))
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("fetch system.account({address}): {e}")))
+            })
+            .await?;
+            let Some(value) = value else {
+                return Ok(None);
+            };
+            let info = value
+                .decode()
+                .map_err(|e| DataError::Decode(format!("decode AccountInfo: {e}")))?;
+            account_info_view(&info)
+        }
     };
-    let info = value
-        .decode()
-        .map_err(|e| DataError::Decode(format!("decode AccountInfo: {e}")))?;
     Ok(Some(map_account_info(&id, &info, ss58_prefix)))
+}
+
+/// Read-only field projection across both runtimes' `frame_system::AccountInfo`
+/// codegen types. Both runtimes lay the struct out identically — `nonce`
+/// at the top, balances under `data` — but the codegen produces distinct
+/// Rust types per module. Implementing one trait per type lets the
+/// per-runtime decode arms collapse into a single
+/// [`account_info_view`] call instead of needing a runtime-suffixed
+/// helper apiece.
+trait AccountInfoFields {
+    fn free(&self) -> u128;
+    fn reserved(&self) -> u128;
+    fn frozen(&self) -> u128;
+    fn nonce(&self) -> u32;
+}
+
+impl AccountInfoFields
+    for allfeat::runtime_types::frame_system::AccountInfo<
+        u32,
+        allfeat::runtime_types::pallet_balances::types::AccountData<u128>,
+    >
+{
+    fn free(&self) -> u128 { self.data.free }
+    fn reserved(&self) -> u128 { self.data.reserved }
+    fn frozen(&self) -> u128 { self.data.frozen }
+    fn nonce(&self) -> u32 { self.nonce }
+}
+
+impl AccountInfoFields
+    for melodie::runtime_types::frame_system::AccountInfo<
+        u32,
+        melodie::runtime_types::pallet_balances::types::AccountData<u128>,
+    >
+{
+    fn free(&self) -> u128 { self.data.free }
+    fn reserved(&self) -> u128 { self.data.reserved }
+    fn frozen(&self) -> u128 { self.data.frozen }
+    fn nonce(&self) -> u32 { self.nonce }
+}
+
+fn account_info_view<T: AccountInfoFields>(info: &T) -> AccountInfoView {
+    AccountInfoView {
+        free: info.free(),
+        reserved: info.reserved(),
+        frozen: info.frozen(),
+        nonce: info.nonce(),
+    }
 }
 
 /// Hard cap on the `System::Account` scan so a prod chain with millions of
@@ -125,36 +200,75 @@ const MAX_SCAN_ACCOUNTS: usize = 10_000;
 pub async fn fetch_top_accounts(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     count: u32,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Vec<Account>> {
     if count == 0 {
         return Ok(Vec::new());
     }
     with_iter_timeout("fetch_top_accounts", async {
-        let mut entries = at
-            .storage()
-            .iter(allfeat::storage().system().account(), ())
-            .await
-            .map_err(|e| DataError::Rpc(format!("iter system.account: {e}")))?;
-
-        let mut accounts = Vec::new();
+        // Each arm walks its own runtime-typed iterator and lowers the
+        // codegen `AccountInfo` into a runtime-neutral
+        // `(AccountId32, AccountInfoView)` before pushing into `accounts`.
+        let mut accounts: Vec<Account> = Vec::new();
         let mut truncated = false;
-        while let Some(kv) = entries.next().await {
-            if accounts.len() >= MAX_SCAN_ACCOUNTS {
-                truncated = true;
-                break;
+        match runtime_kind {
+            RuntimeKind::Allfeat => {
+                let mut entries = at
+                    .storage()
+                    .iter(allfeat::storage().system().account(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("iter system.account: {e}")))?;
+                while let Some(kv) = entries.next().await {
+                    if accounts.len() >= MAX_SCAN_ACCOUNTS {
+                        truncated = true;
+                        break;
+                    }
+                    let kv = kv
+                        .map_err(|e| DataError::Rpc(format!("iter system.account next: {e}")))?;
+                    let (id,) = kv
+                        .key()
+                        .map_err(|e| DataError::Decode(format!("system.account key: {e}")))?
+                        .decode()
+                        .map_err(|e| {
+                            DataError::Decode(format!("decode system.account key: {e}"))
+                        })?;
+                    let info = kv
+                        .value()
+                        .decode()
+                        .map_err(|e| DataError::Decode(format!("decode AccountInfo: {e}")))?;
+                    let view = account_info_view(&info);
+                    accounts.push(map_account_info(&id, &view, ss58_prefix));
+                }
             }
-            let kv = kv.map_err(|e| DataError::Rpc(format!("iter system.account next: {e}")))?;
-            let (id,) = kv
-                .key()
-                .map_err(|e| DataError::Decode(format!("system.account key: {e}")))?
-                .decode()
-                .map_err(|e| DataError::Decode(format!("decode system.account key: {e}")))?;
-            let info = kv
-                .value()
-                .decode()
-                .map_err(|e| DataError::Decode(format!("decode AccountInfo: {e}")))?;
-            accounts.push(map_account_info(&id, &info, ss58_prefix));
+            RuntimeKind::Melodie => {
+                let mut entries = at
+                    .storage()
+                    .iter(melodie::storage().system().account(), ())
+                    .await
+                    .map_err(|e| DataError::Rpc(format!("iter system.account: {e}")))?;
+                while let Some(kv) = entries.next().await {
+                    if accounts.len() >= MAX_SCAN_ACCOUNTS {
+                        truncated = true;
+                        break;
+                    }
+                    let kv = kv
+                        .map_err(|e| DataError::Rpc(format!("iter system.account next: {e}")))?;
+                    let (id,) = kv
+                        .key()
+                        .map_err(|e| DataError::Decode(format!("system.account key: {e}")))?
+                        .decode()
+                        .map_err(|e| {
+                            DataError::Decode(format!("decode system.account key: {e}"))
+                        })?;
+                    let info = kv
+                        .value()
+                        .decode()
+                        .map_err(|e| DataError::Decode(format!("decode AccountInfo: {e}")))?;
+                    let view = account_info_view(&info);
+                    accounts.push(map_account_info(&id, &view, ss58_prefix));
+                }
+            }
         }
         if truncated {
             tracing::warn!(
@@ -184,6 +298,7 @@ pub async fn fetch_top_accounts(
 pub async fn fetch_accounts_at(
     at: &OnlineClientAtBlock<SubstrateConfig>,
     accounts: &[[u8; 32]],
+    runtime_kind: RuntimeKind,
 ) -> DataResult<Vec<([u8; 32], AccountSnapshot)>> {
     if accounts.is_empty() {
         return Ok(Vec::new());
@@ -191,29 +306,67 @@ pub async fn fetch_accounts_at(
     stream::iter(accounts.iter().copied())
         .map(|bytes| async move {
             let id = AccountId32::from(bytes);
-            let value = at
-                .storage()
-                .try_fetch(allfeat::storage().system().account(), (id,))
-                .await
-                .map_err(|e| {
-                    DataError::Rpc(format!("fetch system.account({}): {e}", hex_short(&bytes)))
-                })?;
-            let snapshot = match value {
-                Some(v) => {
-                    let info = v.decode().map_err(|e| {
-                        DataError::Decode(format!(
-                            "decode AccountInfo for {}: {e}",
-                            hex_short(&bytes)
-                        ))
-                    })?;
-                    AccountSnapshot {
-                        free: info.data.free,
-                        reserved: info.data.reserved,
-                        frozen: info.data.frozen,
-                        nonce: info.nonce,
+            let snapshot = match runtime_kind {
+                RuntimeKind::Allfeat => {
+                    let value = at
+                        .storage()
+                        .try_fetch(allfeat::storage().system().account(), (id,))
+                        .await
+                        .map_err(|e| {
+                            DataError::Rpc(format!(
+                                "fetch system.account({}): {e}",
+                                hex_short(&bytes)
+                            ))
+                        })?;
+                    match value {
+                        Some(v) => {
+                            let info = v.decode().map_err(|e| {
+                                DataError::Decode(format!(
+                                    "decode AccountInfo for {}: {e}",
+                                    hex_short(&bytes)
+                                ))
+                            })?;
+                            let view = account_info_view(&info);
+                            AccountSnapshot {
+                                free: view.free,
+                                reserved: view.reserved,
+                                frozen: view.frozen,
+                                nonce: view.nonce,
+                            }
+                        }
+                        None => AccountSnapshot::default(),
                     }
                 }
-                None => AccountSnapshot::default(),
+                RuntimeKind::Melodie => {
+                    let value = at
+                        .storage()
+                        .try_fetch(melodie::storage().system().account(), (id,))
+                        .await
+                        .map_err(|e| {
+                            DataError::Rpc(format!(
+                                "fetch system.account({}): {e}",
+                                hex_short(&bytes)
+                            ))
+                        })?;
+                    match value {
+                        Some(v) => {
+                            let info = v.decode().map_err(|e| {
+                                DataError::Decode(format!(
+                                    "decode AccountInfo for {}: {e}",
+                                    hex_short(&bytes)
+                                ))
+                            })?;
+                            let view = account_info_view(&info);
+                            AccountSnapshot {
+                                free: view.free,
+                                reserved: view.reserved,
+                                frozen: view.frozen,
+                                nonce: view.nonce,
+                            }
+                        }
+                        None => AccountSnapshot::default(),
+                    }
+                }
             };
             Ok::<_, DataError>((bytes, snapshot))
         })
@@ -235,28 +388,17 @@ fn hex_short(bytes: &[u8; 32]) -> String {
 mod tests {
     use super::*;
 
-    fn account_info_fixture(
+    fn account_info_view_fixture(
         free: u128,
         reserved: u128,
         frozen: u128,
         nonce: u32,
-    ) -> allfeat::runtime_types::frame_system::AccountInfo<
-        u32,
-        allfeat::runtime_types::pallet_balances::types::AccountData<u128>,
-    > {
-        use allfeat::runtime_types::frame_system::AccountInfo;
-        use allfeat::runtime_types::pallet_balances::types::{AccountData, ExtraFlags};
-        AccountInfo {
+    ) -> AccountInfoView {
+        AccountInfoView {
+            free,
+            reserved,
+            frozen,
             nonce,
-            consumers: 0,
-            providers: 1,
-            sufficients: 0,
-            data: AccountData {
-                free,
-                reserved,
-                frozen,
-                flags: ExtraFlags(0),
-            },
         }
     }
 
@@ -279,7 +421,7 @@ mod tests {
     #[test]
     fn map_account_info_sums_total_and_uses_free_for_transferable() {
         let id = AccountId32::from([9u8; 32]);
-        let info = account_info_fixture(100, 40, 10, 7);
+        let info = account_info_view_fixture(100, 40, 10, 7);
         // Prefix 42 keeps the expected string aligned with subxt's built-in
         // `Display` so the assertion stays readable.
         let account = map_account_info(&id, &info, 42);
@@ -297,10 +439,59 @@ mod tests {
     #[test]
     fn map_account_info_handles_zero_balance() {
         let id = AccountId32::from([0u8; 32]);
-        let info = account_info_fixture(0, 0, 0, 0);
+        let info = account_info_view_fixture(0, 0, 0, 0);
         let account = map_account_info(&id, &info, 42);
         assert_eq!(account.balance.total, 0);
         assert_eq!(account.balance.transferable, 0);
         assert_eq!(account.balance.reserved, 0);
+    }
+
+    /// The runtime-specific projections must agree on the `(free, reserved,
+    /// frozen, nonce)` they extract — they're the only places where the
+    /// codegen-typed `AccountInfo` fields are read, so a regression here
+    /// (e.g. a renamed field on one side) would silently corrupt every
+    /// per-runtime balance read.
+    #[test]
+    fn account_info_views_agree_across_runtimes() {
+        use allfeat::runtime_types::frame_system::AccountInfo as AllfeatAccountInfo;
+        use allfeat::runtime_types::pallet_balances::types::{
+            AccountData as AllfeatAccountData, ExtraFlags as AllfeatExtraFlags,
+        };
+        use melodie::runtime_types::frame_system::AccountInfo as MelodieAccountInfo;
+        use melodie::runtime_types::pallet_balances::types::{
+            AccountData as MelodieAccountData, ExtraFlags as MelodieExtraFlags,
+        };
+
+        let allfeat = AllfeatAccountInfo {
+            nonce: 7,
+            consumers: 0,
+            providers: 1,
+            sufficients: 0,
+            data: AllfeatAccountData {
+                free: 100,
+                reserved: 40,
+                frozen: 10,
+                flags: AllfeatExtraFlags(0),
+            },
+        };
+        let melodie = MelodieAccountInfo {
+            nonce: 7,
+            consumers: 0,
+            providers: 1,
+            sufficients: 0,
+            data: MelodieAccountData {
+                free: 100,
+                reserved: 40,
+                frozen: 10,
+                flags: MelodieExtraFlags(0),
+            },
+        };
+
+        let a = account_info_view(&allfeat);
+        let m = account_info_view(&melodie);
+        assert_eq!(a.free, m.free);
+        assert_eq!(a.reserved, m.reserved);
+        assert_eq!(a.frozen, m.frozen);
+        assert_eq!(a.nonce, m.nonce);
     }
 }

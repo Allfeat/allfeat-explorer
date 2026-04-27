@@ -2,8 +2,9 @@
 //! attributing each to the extrinsic that emitted it via the phase index.
 
 use crate::data::error::{DataError, DataResult};
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
 use crate::domain::{Extrinsic, Transfer};
+use crate::network::RuntimeKind;
 
 use super::common::{account_ss58, EventsByPhase};
 
@@ -22,14 +23,18 @@ use super::common::{account_ss58, EventsByPhase};
 pub fn map_transfers(
     block_extrinsics: &[Extrinsic],
     events_by_phase: &EventsByPhase<'_>,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Vec<Transfer>> {
-    Ok(
-        map_transfers_with_event_idx(block_extrinsics, events_by_phase, ss58_prefix)?
-            .into_iter()
-            .map(|(t, _)| t)
-            .collect(),
-    )
+    Ok(map_transfers_with_event_idx(
+        block_extrinsics,
+        events_by_phase,
+        runtime_kind,
+        ss58_prefix,
+    )?
+    .into_iter()
+    .map(|(t, _)| t)
+    .collect())
 }
 
 /// Same semantics as [`map_transfers`], but pairs each transfer with the
@@ -42,6 +47,7 @@ pub fn map_transfers(
 pub fn map_transfers_with_event_idx(
     block_extrinsics: &[Extrinsic],
     events_by_phase: &EventsByPhase<'_>,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Vec<(Transfer, u32)>> {
     let mut out = Vec::new();
@@ -53,15 +59,43 @@ pub fn map_transfers_with_event_idx(
             if evt.pallet_name() != "Balances" || evt.event_name() != "Transfer" {
                 continue;
             }
-            let decoded = evt
-                .decode_fields_unchecked_as::<allfeat::balances::events::Transfer>()
-                .map_err(|e| DataError::Decode(format!("decode Balances.Transfer: {e}")))?;
+            // SCALE shape is identical (AccountId32, AccountId32, u128) on
+            // both runtimes, but the codegen produces distinct Rust types
+            // per module — dispatch on the tag and collapse into the
+            // ss58/u128 trio the domain layer expects before leaving the
+            // arm.
+            let (from, to, amount) = match runtime_kind {
+                RuntimeKind::Allfeat => {
+                    let decoded = evt
+                        .decode_fields_unchecked_as::<allfeat::balances::events::Transfer>()
+                        .map_err(|e| {
+                            DataError::Decode(format!("decode Balances.Transfer: {e}"))
+                        })?;
+                    (
+                        account_ss58(&decoded.from, ss58_prefix),
+                        account_ss58(&decoded.to, ss58_prefix),
+                        decoded.amount,
+                    )
+                }
+                RuntimeKind::Melodie => {
+                    let decoded = evt
+                        .decode_fields_unchecked_as::<melodie::balances::events::Transfer>()
+                        .map_err(|e| {
+                            DataError::Decode(format!("decode Balances.Transfer: {e}"))
+                        })?;
+                    (
+                        account_ss58(&decoded.from, ss58_prefix),
+                        account_ss58(&decoded.to, ss58_prefix),
+                        decoded.amount,
+                    )
+                }
+            };
             out.push((
                 Transfer {
                     extrinsic: extrinsic.clone(),
-                    from: account_ss58(&decoded.from, ss58_prefix),
-                    to: account_ss58(&decoded.to, ss58_prefix),
-                    amount: decoded.amount,
+                    from,
+                    to,
+                    amount,
                 },
                 evt.index(),
             ));

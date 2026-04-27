@@ -25,7 +25,7 @@ pub mod mock;
 
 // `metadata` only needs subxt (already ssr-gated); having it visible in
 // mock builds too lets the runtime-identity page render the
-// `METADATA_VERSION` tile and the pallet-filter dropdown feed off the
+// `metadata_version` tile and the pallet-filter dropdown feed off the
 // same compiled blob the RPC path decodes against.
 pub mod metadata;
 

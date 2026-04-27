@@ -8,8 +8,9 @@ use subxt::SubstrateConfig;
 use crate::data::error::{DataError, DataResult};
 use crate::data::metadata::decode_call_args;
 use crate::data::rpc::client::with_timeout;
-use crate::data::rpc::runtime::allfeat;
+use crate::data::rpc::runtime::{allfeat, melodie};
 use crate::domain::{CallResult, EventRef, Extrinsic, ExtrinsicArgs};
+use crate::network::RuntimeKind;
 
 use super::common::{decode_signer_ss58, hash_string, EventsByPhase};
 
@@ -38,6 +39,7 @@ pub async fn map_extrinsics<'a>(
     timestamp_ms: i64,
     events_by_phase: &EventsByPhase<'a>,
     network_id: &str,
+    runtime_kind: RuntimeKind,
     ss58_prefix: u16,
 ) -> DataResult<Vec<Extrinsic>> {
     let block_number = at.block_number();
@@ -96,12 +98,26 @@ pub async fn map_extrinsics<'a>(
             match (pallet_name, event_name) {
                 ("System", "ExtrinsicFailed") => result = CallResult::Failed,
                 ("TransactionPayment", "TransactionFeePaid") => {
-                    if let Ok(paid) = evt
-                        .decode_fields_unchecked_as::<
-                            allfeat::transaction_payment::events::TransactionFeePaid,
-                        >()
-                    {
-                        fee = paid.actual_fee;
+                    // SCALE shape is identical across runtimes (who/actual_fee/
+                    // tip), but the codegen produces distinct Rust types per
+                    // module — dispatch on the tag and pull `actual_fee` out
+                    // before the arm boundary.
+                    let actual_fee = match runtime_kind {
+                        RuntimeKind::Allfeat => evt
+                            .decode_fields_unchecked_as::<
+                                allfeat::transaction_payment::events::TransactionFeePaid,
+                            >()
+                            .ok()
+                            .map(|paid| paid.actual_fee),
+                        RuntimeKind::Melodie => evt
+                            .decode_fields_unchecked_as::<
+                                melodie::transaction_payment::events::TransactionFeePaid,
+                            >()
+                            .ok()
+                            .map(|paid| paid.actual_fee),
+                    };
+                    if let Some(actual_fee) = actual_fee {
+                        fee = actual_fee;
                     }
                 }
                 _ => {}

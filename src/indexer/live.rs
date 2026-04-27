@@ -146,26 +146,28 @@ impl LiveWorker {
     /// waiting on the node.
     async fn index_block(&self, num: u64) -> DataResult<()> {
         let api = self.client.subxt().await?;
+        let runtime_kind = self.client.runtime_kind();
         let at = race_timeout("at_block", api.at_block(num))
             .await?
             .map_err(|e| DataError::Rpc(format!("at_block({num}): {e}")))?;
-        let row = projections::blocks::map(&at, num).await?;
-        let extrinsic_rows = projections::extrinsics::map(&at, num).await?;
+        let row = projections::blocks::map(&at, num, runtime_kind).await?;
+        let extrinsic_rows = projections::extrinsics::map(&at, num, runtime_kind).await?;
         let event_rows = projections::events::map(&at, num).await?;
         let balance_projection =
-            projections::balances::project_block(&at, &extrinsic_rows, num).await?;
+            projections::balances::project_block(&at, &extrinsic_rows, num, runtime_kind).await?;
         let touched = projections::accounts::collect_touched(
             &balance_projection.touched_accounts,
             &extrinsic_rows,
         );
-        let snapshots = fetch_accounts_at(&at, &touched).await?;
-        let ats_ops = projections::ats::project_block(&at, &extrinsic_rows, num).await?;
+        let snapshots = fetch_accounts_at(&at, &touched, runtime_kind).await?;
+        let ats_ops =
+            projections::ats::project_block(&at, &extrinsic_rows, num, runtime_kind).await?;
         // Genesis has no balance events — the initial supply is laid
         // down by the chain spec. Walk `System::Account` once so every
         // endowed account lands in the DB; regular blocks 1..N then
         // keep individual rows fresh via the per-block touched set.
         let genesis_snapshots = if num == 0 {
-            projections::genesis::project_genesis_accounts(&at).await?
+            projections::genesis::project_genesis_accounts(&at, runtime_kind).await?
         } else {
             Vec::new()
         };
