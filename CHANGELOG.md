@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.2.1...backend-v0.3.0) (2026-04-27)
+
+
+### Features
+
+* **api:** per-runtime dispatch across mappers, projections, and provider ([d27f393](https://github.com/Allfeat/allfeat-explorer/commit/d27f3935b627c73b65ca76e26a0a8afc9b48aeaf))
+* **api:** scaffold Melodie sibling runtime codegen ([308c92d](https://github.com/Allfeat/allfeat-explorer/commit/308c92de35b9f2641b65d7e53efa0754ef70ceca))
+
+
+### Refactoring
+
+* **api:** per-network metadata bundles and RpcClient runtime tagging ([8fb60a1](https://github.com/Allfeat/allfeat-explorer/commit/8fb60a149400a4d4b7b1211631b00fc5f0d90cae))
+
 ## [0.2.1](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.2.0...backend-v0.2.1) (2026-04-25)
 
 
