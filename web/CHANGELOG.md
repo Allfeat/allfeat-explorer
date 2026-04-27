@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.3.0...web-v0.3.1) (2026-04-27)
+
+
+### Bug Fixes
+
+* **web:** preserve active network query across header and breadcrumb links ([29e6016](https://github.com/Allfeat/allfeat-explorer/commit/29e6016b631eb20766f965574420ac97e6208e92))
+
 ## [0.3.0](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.2.0...web-v0.3.0) (2026-04-25)
 
 
