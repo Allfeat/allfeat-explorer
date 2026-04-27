@@ -31,6 +31,7 @@ const ALL_NAV_ITEMS: readonly NavItem[] = [
 // to `true` during the SSR window before the active network resolves, keeping
 // the server and client markup stable.
 const { isMainnet } = useActiveNetwork()
+const { to: linkTo } = useNetworkLink()
 
 const NAV_ITEMS = computed(() =>
   ALL_NAV_ITEMS.filter(it => !it.mainnetOnly || isMainnet.value),
@@ -108,7 +109,7 @@ function onNavClick(it: NavItem, e: MouseEvent) {
         </svg>
       </button>
 
-      <NuxtLink to="/" class="brand" aria-label="Allfeat Explorer">
+      <NuxtLink :to="linkTo('/')" class="brand" aria-label="Allfeat Explorer">
         <BrandLogo class="brand-mark" />
         <span class="brand-suffix">Explorer</span>
       </NuxtLink>
@@ -117,7 +118,7 @@ function onNavClick(it: NavItem, e: MouseEvent) {
         <NuxtLink
           v-for="it in NAV_ITEMS"
           :key="it.id"
-          :to="it.disabled ? '' : it.path"
+          :to="it.disabled ? '' : linkTo(it.path)"
           :data-collapse-at="it.collapseAt || undefined"
           :class="{ active: isActive(it.path) }"
           :style="it.disabled ? { opacity: 0.45, cursor: 'default' } : undefined"
@@ -149,7 +150,7 @@ function onNavClick(it: NavItem, e: MouseEvent) {
             <NuxtLink
               v-for="it in MORE_ITEMS"
               :key="it.id"
-              :to="it.disabled ? '' : it.path"
+              :to="it.disabled ? '' : linkTo(it.path)"
               :data-show-at="it.collapseAt || undefined"
               :class="{ active: isActive(it.path) }"
               :style="it.disabled ? { opacity: 0.45, cursor: 'default' } : undefined"

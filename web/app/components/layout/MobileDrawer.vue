@@ -45,6 +45,8 @@ function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(`${path}/`)
 }
 
+const { to: linkTo } = useNetworkLink()
+
 function onItemClick(it: NavItem, e: MouseEvent) {
   if (it.disabled) {
     e.preventDefault()
@@ -76,7 +78,7 @@ const YEAR = computed(() => new Date().getFullYear())
           tabindex="-1"
         >
           <div class="drawer-head">
-            <NuxtLink to="/" class="drawer-brand" @click="emit('close')">
+            <NuxtLink :to="linkTo('/')" class="drawer-brand" @click="emit('close')">
               <BrandLogo class="drawer-brand-mark" />
               <span class="drawer-brand-suffix">Explorer</span>
             </NuxtLink>
@@ -101,7 +103,7 @@ const YEAR = computed(() => new Date().getFullYear())
             <NuxtLink
               v-for="it in items"
               :key="it.id"
-              :to="it.disabled ? '' : it.path"
+              :to="it.disabled ? '' : linkTo(it.path)"
               :class="{ 'drawer-nav-link': true, active: isActive(it.path), disabled: it.disabled }"
               @click="onItemClick(it, $event)"
             >
