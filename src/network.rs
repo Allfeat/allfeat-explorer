@@ -11,6 +11,19 @@ use serde::Serialize;
 #[cfg(feature = "ts-bindings")]
 use ts_rs::TS;
 
+/// Discriminator for the codegen runtime module a [`NetworkSpec`] reads
+/// through. Picked up by [`crate::data::rpc::client::RpcClient`] at
+/// construction so every per-network call site can dispatch on it
+/// (`match runtime_kind { Allfeat => runtime::allfeat::…, Melodie =>
+/// runtime::melodie::… }`). Both runtimes share `SubstrateConfig`, so
+/// the connection itself is uniform — only the codegen `runtime_types`
+/// differ.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeKind {
+    Allfeat,
+    Melodie,
+}
+
 /// Static, compile-time description of a mock chain.
 ///
 /// `Serialize` is derived so the `/api/v1/networks` handler can emit
@@ -64,6 +77,14 @@ pub struct NetworkSpec {
     #[cfg_attr(feature = "ts-bindings", ts(skip))]
     pub ats_blocks_per: u32,
     pub endpoint: &'static str,
+    /// Codegen runtime module this network reads through. Backend-only
+    /// detail — never crosses the wire, never appears in TS bindings.
+    /// Hand-fixed at the spec declaration; the indexer and every RPC
+    /// mapper dispatches on the value carried by the per-network
+    /// [`crate::data::rpc::client::RpcClient`].
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts-bindings", ts(skip))]
+    pub runtime_kind: RuntimeKind,
 }
 
 // Genesis instants, picked once so per-network head/ATS counts at boot land
@@ -102,6 +123,7 @@ pub const ALLFEAT: NetworkSpec = NetworkSpec {
     ],
     ats_blocks_per: 5,
     endpoint: "wss://mainnet.rpc.allfeat.org",
+    runtime_kind: RuntimeKind::Allfeat,
 };
 
 pub const MELODIE: NetworkSpec = NetworkSpec {
@@ -133,6 +155,7 @@ pub const MELODIE: NetworkSpec = NetworkSpec {
     ],
     ats_blocks_per: 3,
     endpoint: "wss://melodie-rpc.allfeat.io",
+    runtime_kind: RuntimeKind::Melodie,
 };
 
 pub const NETWORKS: &[&NetworkSpec] = &[&ALLFEAT, &MELODIE];
