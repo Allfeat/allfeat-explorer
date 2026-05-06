@@ -6,7 +6,7 @@
 //!
 //! * `registry_matches_rpc_scan` — create a handful of fresh ATS
 //!   entries on the dev node, then for each one reached via the RPC
-//!   mapper (`build_ats_record`) verify `IndexedProvider::ats_by_index`
+//!   mapper (`build_ats_record`) verify `IndexedProvider::ats_by_id`
 //!   returns the same owner / created_block / version_count. Using
 //!   fresh entries keeps the test tractable on any dev node — we never
 //!   assume a pre-existing ATS.
@@ -155,7 +155,7 @@ fn ats_created_id(sub: &Submitted) -> u64 {
 /// Create a fresh ATS signed by `signer`. Returns `(block_num, ats_id)`
 /// — the id is scraped from `AtsCreated` so parallel tests racing on
 /// `NextAtsId` each get their own exact id instead of computing one
-/// from a stale `next_ats_id()` read.
+/// from a stale read of the next-id storage value.
 async fn create_ats(
     api: &subxt::client::OnlineClient<subxt::SubstrateConfig>,
     signer: &Keypair,
@@ -176,20 +176,6 @@ async fn update_ats(
 ) -> u64 {
     let tx = allfeat::tx().ats().update(ats_id, commitment, 1);
     submit_signed(api, signer, tx).await.block_num
-}
-
-/// Read `ats_registry.NextAtsId` at the finalized head. Tests that
-/// need an upper bound (e.g. translating an ats_id into a newest-first
-/// position) use this after all creations have finalized.
-async fn next_ats_id(client: &RpcClient) -> u64 {
-    let api = client.subxt().await.expect("subxt client");
-    let at = api
-        .at_current_block()
-        .await
-        .expect("at_current_block for next_ats_id");
-    allfeat_explorer::data::rpc::mappers::fetch_next_ats_id(&at, client.runtime_kind())
-        .await
-        .expect("fetch next_ats_id")
 }
 
 /// Create N fresh ATS entries from a single signer. Returns the
@@ -259,15 +245,8 @@ async fn registry_matches_rpc_scan() {
 
     // Oracle: the RPC mapper walks storage + pins each version's
     // creator block to build `AtsRecord`. Both providers expose
-    // `ats_by_index` under "newest-first position" semantics (the URL
-    // shape the UI uses), so we translate each raw on-chain ats_id
-    // we seeded into the position the providers will recognise.
-    //
-    // `post_next` is read AFTER creation to pin the translation — if
-    // another test runs in parallel and bumps NextAtsId further, our
-    // positions stay correct as long as nothing gets revoked during
-    // the test (we don't revoke anywhere).
-    let post_next = next_ats_id(&client).await;
+    // `ats_by_id` keyed by the chain's `ats_id` (the URL shape the UI
+    // uses: `/ats/<ats_id>`), so we look each seeded entry up directly.
     let rpc_provider = Arc::new(allfeat_rpc_provider(client.clone()));
     let provider = IndexedProvider::new(
         pool.clone(),
@@ -277,40 +256,28 @@ async fn registry_matches_rpc_scan() {
     );
 
     for (_, ats_id) in &created {
-        let position = u32::try_from(post_next - 1 - *ats_id).expect("position fits u32");
+        let id = u32::try_from(*ats_id).expect("ids in test range fit u32");
         let db_rec = provider
-            .ats_by_index(allfeat_ctx(), position)
+            .ats_by_id(allfeat_ctx(), id)
             .await
-            .expect("ats_by_index succeeds")
-            .unwrap_or_else(|| panic!("ats at position {position} (id {ats_id}) must be indexed"));
+            .expect("ats_by_id succeeds")
+            .unwrap_or_else(|| panic!("ats id {id} must be indexed"));
         let rpc_rec = rpc_provider
-            .ats_by_index(allfeat_ctx(), position)
+            .ats_by_id(allfeat_ctx(), id)
             .await
-            .expect("rpc ats_by_index succeeds")
-            .unwrap_or_else(|| {
-                panic!("ats at position {position} (id {ats_id}) must exist on chain")
-            });
+            .expect("rpc ats_by_id succeeds")
+            .unwrap_or_else(|| panic!("ats id {id} must exist on chain"));
 
-        let expected_id = u32::try_from(*ats_id).expect("ids in test range fit u32");
-        assert_eq!(
-            db_rec.ats_id, expected_id,
-            "DB returned wrong ats_id at position {position}"
-        );
-        assert_eq!(
-            rpc_rec.ats_id, expected_id,
-            "RPC returned wrong ats_id at position {position}"
-        );
-        assert_eq!(
-            db_rec.owner, rpc_rec.owner,
-            "owner mismatch for {expected_id}"
-        );
+        assert_eq!(db_rec.ats_id, id, "DB returned wrong ats_id for {id}");
+        assert_eq!(rpc_rec.ats_id, id, "RPC returned wrong ats_id for {id}");
+        assert_eq!(db_rec.owner, rpc_rec.owner, "owner mismatch for {id}");
         assert_eq!(
             db_rec.created_at_block, rpc_rec.created_at_block,
-            "created_at_block mismatch for {expected_id}",
+            "created_at_block mismatch for {id}",
         );
         assert_eq!(
             db_rec.version_count, rpc_rec.version_count,
-            "version_count mismatch for {expected_id}",
+            "version_count mismatch for {id}",
         );
     }
 

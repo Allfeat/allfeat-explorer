@@ -146,7 +146,7 @@ pub trait ChainData: Send + Sync + 'static {
     // ── ATS ─────────────────────────────────────────────────────────────────
     async fn ats_stats(&self, ctx: ChainCtx) -> DataResult<AtsStats>;
 
-    async fn ats_by_index(&self, ctx: ChainCtx, index: u32) -> DataResult<Option<AtsRecord>>;
+    async fn ats_by_id(&self, ctx: ChainCtx, ats_id: u32) -> DataResult<Option<AtsRecord>>;
 
     /// Paginated newest-first ATS list. Cursor is
     /// [`crate::data::cursor::AtsCursor`] (the ATS id); `total` is

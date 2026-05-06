@@ -617,13 +617,13 @@ impl ChainData for IndexedProvider {
         queries::ats::ats_stats(&self.pool, sid).await
     }
 
-    async fn ats_by_index(&self, ctx: ChainCtx, index: u32) -> DataResult<Option<AtsRecord>> {
+    async fn ats_by_id(&self, ctx: ChainCtx, ats_id: u32) -> DataResult<Option<AtsRecord>> {
         if !self.is_indexed(ctx) {
-            return self.rpc.ats_by_index(ctx, index).await;
+            return self.rpc.ats_by_id(ctx, ats_id).await;
         }
         let ss58_prefix = self.ss58_prefix(ctx);
         let sid = self.network_sid(ctx)?;
-        queries::ats::ats_by_index(&self.pool, sid, index, ss58_prefix).await
+        queries::ats::ats_by_id(&self.pool, sid, ats_id, ss58_prefix).await
     }
 
     async fn ats_list(

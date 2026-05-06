@@ -115,8 +115,8 @@ pub fn router(state: AppState) -> Router {
             get(extrinsics::extrinsic_by_id),
         )
         .route(
-            "/api/v1/networks/{network_id}/ats/{index}",
-            get(ats::ats_by_index),
+            "/api/v1/networks/{network_id}/ats/{ats_id}",
+            get(ats::ats_by_id),
         )
         .route(
             "/api/v1/networks/{network_id}/token/envelopes/{envelope_id}",

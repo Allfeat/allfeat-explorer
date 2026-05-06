@@ -719,27 +719,27 @@ impl ChainData for RpcProvider {
         .await
     }
 
-    async fn ats_by_index(&self, ctx: ChainCtx, index: u32) -> DataResult<Option<AtsRecord>> {
+    async fn ats_by_id(&self, ctx: ChainCtx, ats_id: u32) -> DataResult<Option<AtsRecord>> {
         let client = self.client(ctx)?;
         let ss58_prefix = client.ss58_prefix();
         let runtime_kind = client.runtime_kind();
         let network_id = ctx.spec.id;
-        let cache = &client.caches().ats_by_index;
+        let cache = &client.caches().ats_by_id;
         let client_for_load = client.clone();
-        cached(cache, "ats_by_index", index, async move {
+        cached(cache, "ats_by_id", ats_id, async move {
             let api = client_for_load.subxt().await?;
             let at = race_timeout("at_current_block", api.at_current_block())
                 .await?
                 .map_err(|e| DataError::Rpc(format!("at_current_block: {e}")))?;
-            // Explorer pages request by "newest-first" position; translate to the
-            // on-chain id by subtracting from `NextAtsId`.
-            let next = mappers::fetch_next_ats_id(&at, runtime_kind).await?;
-            if next == 0 || index as u64 >= next {
-                return Ok(None);
-            }
-            let ats_id = next - 1 - index as u64;
-            mappers::build_ats_record(&api, &at, ats_id, network_id, runtime_kind, ss58_prefix)
-                .await
+            mappers::build_ats_record(
+                &api,
+                &at,
+                ats_id as u64,
+                network_id,
+                runtime_kind,
+                ss58_prefix,
+            )
+            .await
         })
         .await
     }

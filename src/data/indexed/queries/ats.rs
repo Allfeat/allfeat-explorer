@@ -92,14 +92,15 @@ pub async fn max_ats_id(pool: &PgPool, network_sid: i16) -> DataResult<Option<u6
     Ok(row.and_then(|(opt,)| opt).map(|v| v as u64))
 }
 
-/// Fetch one ATS on `network_id` by its **newest-first position**.
+/// Fetch one ATS on `network_id` by its **chain `ats_id`**.
 ///
-/// Returns `None` when the position is past the registry tail or the
-/// entry has been revoked.
-pub async fn ats_by_index(
+/// Returns `None` when the id is unknown or the entry has been revoked
+/// (the registry row is deleted by `AtsRevoked` and the cascading
+/// version delete drops the history with it).
+pub async fn ats_by_id(
     pool: &PgPool,
     network_sid: i16,
-    index: u32,
+    ats_id: u32,
     ss58_prefix: u16,
 ) -> DataResult<Option<AtsRecord>> {
     let registry: Option<RegistryRow> = sqlx::query_as(
@@ -107,15 +108,14 @@ pub async fn ats_by_index(
                 COALESCE(b.timestamp_ms, 0) AS created_timestamp_ms \
          FROM ats_registry r \
          LEFT JOIN blocks b ON b.network_id = r.network_id AND b.num = r.created_block \
-         WHERE r.network_id = $1 \
-         ORDER BY r.id DESC \
-         OFFSET $2 LIMIT 1",
+         WHERE r.network_id = $1 AND r.id = $2 \
+         LIMIT 1",
     )
     .bind(network_sid)
-    .bind(index as i64)
+    .bind(ats_id as i64)
     .fetch_optional(pool)
     .await
-    .map_err(|e| DataError::Rpc(format!("ats_by_index(net={network_sid}, {index}): {e}")))?;
+    .map_err(|e| DataError::Rpc(format!("ats_by_id(net={network_sid}, {ats_id}): {e}")))?;
 
     let Some(reg) = registry else {
         return Ok(None);

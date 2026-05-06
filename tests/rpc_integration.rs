@@ -471,7 +471,7 @@ async fn live_alice_to_bob_transfer_shows_up() {
 /// End-to-end lifecycle: submit one ATS as Alice, then add a second version,
 /// and verify the provider-side view captures the record + its two versions.
 ///
-/// Covers `ats_by_index(0)`, `ats_list`, `ats_version_feed`, `account_ats`,
+/// Covers `ats_by_id`, `ats_list`, `ats_version_feed`, `account_ats`,
 /// `account_ats_count`, and `ats_stats` in a single pass so the dev-node
 /// state we produce is exercised from every entry point.
 #[tokio::test]
@@ -543,13 +543,15 @@ async fn live_alice_ats_create_and_update() {
     assert_eq!(updated.ats_id, new_id);
     assert_eq!(updated.version, 1, "update must bump to version 1");
 
-    // `ats_by_index(0)` resolves to the newest entry (our fresh ATS).
+    // `ats_by_id` keys on the chain ats_id we just received in the
+    // `AtsCreated` event — the URL contract the UI uses (`/ats/<ats_id>`).
     let alice_ss58 = subxt::utils::AccountId32::from(dev::alice().public_key().0).to_string();
+    let id_u32 = u32::try_from(new_id).expect("dev-node ats_id fits u32");
     let record = provider
-        .ats_by_index(ctx, 0)
+        .ats_by_id(ctx, id_u32)
         .await
-        .expect("ats_by_index(0) succeeds")
-        .expect("newest ats must exist after create");
+        .expect("ats_by_id succeeds")
+        .expect("ats must exist after create");
     assert_eq!(record.owner, alice_ss58, "owner must be Alice");
     assert_eq!(
         record.version_count, 2,

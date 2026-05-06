@@ -41,16 +41,16 @@ pub async fn list_ats(
     Ok(Json(page))
 }
 
-pub async fn ats_by_index(
+pub async fn ats_by_id(
     State(state): State<AppState>,
-    Path((network_id, index)): Path<(String, u32)>,
+    Path((network_id, ats_id)): Path<(String, u32)>,
 ) -> Result<Json<AtsRecord>, ApiError> {
     let ctx = ctx_for(&network_id)?;
     let record = state
         .provider
-        .ats_by_index(ctx, index)
+        .ats_by_id(ctx, ats_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("ATS #{index} not found")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("ATS #{ats_id} not found")))?;
     Ok(Json(record))
 }
 

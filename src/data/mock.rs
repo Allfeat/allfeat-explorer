@@ -406,10 +406,15 @@ impl ChainData for MockProvider {
         Ok(gen::get_ats_stats(ctx))
     }
 
-    async fn ats_by_index(&self, ctx: ChainCtx, index: u32) -> DataResult<Option<AtsRecord>> {
-        if index >= ctx.ats_total() {
+    async fn ats_by_id(&self, ctx: ChainCtx, ats_id: u32) -> DataResult<Option<AtsRecord>> {
+        let total = ctx.ats_total();
+        // Mock generator emits ats_ids in [1, total]; map back to the
+        // generation index so the same record shape comes out here as
+        // from the list/feed walks.
+        if ats_id == 0 || ats_id > total {
             return Ok(None);
         }
+        let index = total.saturating_sub(ats_id);
         Ok(Some(gen::build_ats(ctx, index)))
     }
 

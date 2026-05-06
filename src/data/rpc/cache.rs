@@ -129,9 +129,10 @@ pub struct Caches {
     /// Single-entry stats snapshot. Walks the whole registry today — the
     /// hot cache keeps the cost amortised over the TTL window.
     pub ats_stats: Cache<(), AtsStats>,
-    /// Index is `newest-first`, so an entry at position 0 changes every time
-    /// a new ATS is registered — hot, not finalized.
-    pub ats_by_index: Cache<u32, Option<AtsRecord>>,
+    /// Keyed by chain `ats_id`. The record itself can mutate (new
+    /// versions, revocation) so this lives in the hot tier even though
+    /// the id is stable.
+    pub ats_by_id: Cache<u32, Option<AtsRecord>>,
     /// `(count, cursor) → Page<AtsRecord>` for the paginated registry
     /// list. Cursor is the newest-first ATS id.
     pub ats_list: Cache<(u32, Option<u32>), Page<AtsRecord>>,
@@ -174,7 +175,7 @@ impl Caches {
             top_accounts: hot_cache(HOT_CAPACITY),
 
             ats_stats: hot_cache(1),
-            ats_by_index: hot_cache(HOT_CAPACITY),
+            ats_by_id: hot_cache(HOT_CAPACITY),
             ats_list: hot_cache(HOT_CAPACITY),
             ats_version_feed: hot_cache(HOT_CAPACITY),
             account_ats: hot_cache(HOT_CAPACITY),
