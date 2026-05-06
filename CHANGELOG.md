@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.0...backend-v0.3.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **api:** resolve ATS detail by chain ats_id, not newest-first offset ([9cc2b57](https://github.com/Allfeat/allfeat-explorer/commit/9cc2b5799cebf10dc31d9bddf14536e280317a73))
+
 ## [0.3.0](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.2.1...backend-v0.3.0) (2026-04-27)
 
 
