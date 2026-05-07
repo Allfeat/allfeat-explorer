@@ -172,6 +172,15 @@ pub fn decode_event_fields(
         return Vec::new();
     };
 
+    // `type_name` is the runtime author's source-level label for each
+    // field (e.g. `T::AccountId`, `[u8; 32]`, `T::Hash`). We don't expose
+    // it on `EventField` like we do on `CallField`, but we route it into
+    // `render_value` so a 32-byte field declared as a hash (e.g. ATS
+    // `commitment: [u8; 32]`) renders as hex instead of being mistaken
+    // for an SS58 account.
+    let type_names: Vec<Option<String>> =
+        variant.fields.iter().map(|f| f.type_name.clone()).collect();
+
     let mut fields_iter = variant
         .fields
         .iter()
@@ -188,16 +197,18 @@ pub fn decode_event_fields(
     match composite {
         scale_value::Composite::Named(named) => named
             .into_iter()
-            .map(|(name, value)| EventField {
+            .enumerate()
+            .map(|(i, (name, value))| EventField {
                 name: Some(name),
-                value: render_value(&value, ss58_prefix),
+                value: render_value(&value, type_names.get(i).and_then(|n| n.as_deref()), ss58_prefix),
             })
             .collect(),
         scale_value::Composite::Unnamed(unnamed) => unnamed
             .into_iter()
-            .map(|value| EventField {
+            .enumerate()
+            .map(|(i, value)| EventField {
                 name: None,
-                value: render_value(&value, ss58_prefix),
+                value: render_value(&value, type_names.get(i).and_then(|n| n.as_deref()), ss58_prefix),
             })
             .collect(),
     }
@@ -295,19 +306,25 @@ pub fn decode_call_fields(
         scale_value::Composite::Named(named) => named
             .into_iter()
             .enumerate()
-            .map(|(i, (name, value))| CallField {
-                name: Some(name),
-                type_name: type_names.get(i).cloned().flatten(),
-                value: render_value(&value, ss58_prefix),
+            .map(|(i, (name, value))| {
+                let type_name = type_names.get(i).cloned().flatten();
+                CallField {
+                    name: Some(name),
+                    value: render_value(&value, type_name.as_deref(), ss58_prefix),
+                    type_name,
+                }
             })
             .collect(),
         scale_value::Composite::Unnamed(unnamed) => unnamed
             .into_iter()
             .enumerate()
-            .map(|(i, value)| CallField {
-                name: None,
-                type_name: type_names.get(i).cloned().flatten(),
-                value: render_value(&value, ss58_prefix),
+            .map(|(i, value)| {
+                let type_name = type_names.get(i).cloned().flatten();
+                CallField {
+                    name: None,
+                    value: render_value(&value, type_name.as_deref(), ss58_prefix),
+                    type_name,
+                }
             })
             .collect(),
     }
@@ -315,38 +332,64 @@ pub fn decode_call_fields(
 
 /// Render a decoded `scale_value::Value` into a compact human-readable
 /// string. The default `Value::Display` produces `Id (((86, 210, …)))`
-/// for a `MultiAddress::Id(AccountId32)` — unusable in the UI. Two
-/// narrow special cases cover the vast majority of Substrate extrinsic
-/// arguments:
+/// for a `MultiAddress::Id(AccountId32)` — unusable in the UI. Three
+/// narrow special cases cover the vast majority of Substrate fields:
 ///
-/// * **32-byte unnamed composite of `u8` primitives** → SS58-encode.
-///   In extrinsic arg position this is almost always an account id
-///   (`AccountId32`, `H256` used as account key, etc.); the occasional
-///   false positive (a 32-byte hash) is still a valid SS58 string and
-///   costs nothing semantically — the `type_name` alongside the value
-///   already tells the reader what the type is.
+/// * **32-byte unnamed composite of `u8` primitives** + the surrounding
+///   `type_name` looks account-like (contains `AccountId` or
+///   `MultiAddress`) → SS58-encode. We don't blanket-SS58 every 32-byte
+///   field because plenty of pallets store fixed-width hashes
+///   (`commitment: [u8; 32]`, `T::Hash`, `H256`) at the same wire shape,
+///   and rendering those as SS58 misleads the reader.
+/// * **32-byte unnamed composite** with a non-account `type_name` (or
+///   no `type_name` at all) → hex-encode. Matches the way every other
+///   read path surfaces opaque fixed-width bytes.
 /// * **Single-field unnamed `Variant`** (e.g. `MultiAddress::Id(inner)`,
-///   `Option::Some(inner)`) → render the inner value; the tag is
-///   redundant with the parent field's `type_name`.
+///   `Option::Some(inner)`) → render the inner value, propagating the
+///   outer `type_name` so a wrapped account stays detectable.
 ///
 /// Everything else falls back to the scale-value `Display` impl, which
 /// is already correct for primitives (u128 → `"123"`, bool → `"true"`,
 /// etc.) and only ugly for the nested-composite cases above.
 #[cfg(not(feature = "mock"))]
-fn render_value(value: &scale_value::Value<u32>, ss58_prefix: u16) -> String {
+fn render_value(
+    value: &scale_value::Value<u32>,
+    type_name: Option<&str>,
+    ss58_prefix: u16,
+) -> String {
     if let Some(bytes) = try_extract_32_bytes(value) {
-        return crate::data::ss58::encode_ss58(&bytes, ss58_prefix);
+        if is_account_like_type_name(type_name) {
+            return crate::data::ss58::encode_ss58(&bytes, ss58_prefix);
+        }
+        return hex_bytes(&bytes);
     }
 
     if let scale_value::ValueDef::Variant(v) = &value.value {
         if let scale_value::Composite::Unnamed(inner) = &v.values {
             if inner.len() == 1 {
-                return render_value(&inner[0], ss58_prefix);
+                // Outer `type_name` (e.g. `MultiAddress<...>`,
+                // `Option<T::AccountId>`) describes the wrapped value, so
+                // propagate it so the SS58 check still sees account-like
+                // wrappers when we descend.
+                return render_value(&inner[0], type_name, ss58_prefix);
             }
         }
     }
 
     value.to_string()
+}
+
+/// Recognise the source-level type names runtime authors use for
+/// account ids and account-id-bearing wrappers. Substring matching is
+/// robust against generics and path qualifiers — `T::AccountId`,
+/// `<T as frame_system::Config>::AccountId`, `AccountIdOf<T>`,
+/// `AccountIdLookupOf<T>`, `MultiAddress<AccountId32, AccountIndex>`
+/// all hit at least one token. Hash-typed fields (`T::Hash`, `H256`,
+/// `[u8; 32]`, `BlakeTwo256::Output`) hit none.
+#[cfg(not(feature = "mock"))]
+fn is_account_like_type_name(type_name: Option<&str>) -> bool {
+    let Some(tn) = type_name else { return false };
+    tn.contains("AccountId") || tn.contains("MultiAddress")
 }
 
 /// Walk a `Value` down the usual newtype / wrapper shapes substrate
@@ -563,6 +606,91 @@ mod tests {
             ExtrinsicArgs::Raw { hex } => assert_eq!(hex, "0xff"),
             other => panic!("expected Raw, got {other:?}"),
         }
+    }
+
+    /// `is_account_like_type_name` is the gate between SS58 and hex
+    /// rendering — pin its contract so a future "let's also catch
+    /// AuthorityId" tweak doesn't silently flip every hash field back
+    /// to SS58. Mirrors the conventions Substrate runtime authors
+    /// actually use for account-bearing fields.
+    #[cfg(not(feature = "mock"))]
+    #[test]
+    fn account_like_type_name_recognises_substrate_conventions() {
+        for tn in [
+            "T::AccountId",
+            "<T as frame_system::Config>::AccountId",
+            "AccountIdOf<T>",
+            "AccountIdLookupOf<T>",
+            "MultiAddress<AccountId32, AccountIndex>",
+        ] {
+            assert!(
+                is_account_like_type_name(Some(tn)),
+                "expected account-like: {tn:?}",
+            );
+        }
+        for tn in [
+            "[u8; 32]",
+            "[u8;32]",
+            "T::Hash",
+            "H256",
+            "BlakeTwo256::Output",
+            "Vec<u8>",
+            "u128",
+        ] {
+            assert!(
+                !is_account_like_type_name(Some(tn)),
+                "expected non-account: {tn:?}",
+            );
+        }
+        assert!(!is_account_like_type_name(None));
+    }
+
+    /// Synthetic 32-byte unnamed composite — the wire shape every
+    /// fixed-width id (`AccountId32`, `H256`, `[u8; 32]`) decodes into
+    /// at the value layer. Lets the rendering tests exercise
+    /// `render_value` without needing a real pallet field whose
+    /// metadata happens to declare the right type.
+    #[cfg(not(feature = "mock"))]
+    fn thirty_two_byte_composite(byte: u8) -> scale_value::Value<u32> {
+        let items: Vec<scale_value::Value<u32>> = (0..32)
+            .map(|_| scale_value::Value {
+                value: scale_value::ValueDef::Primitive(scale_value::Primitive::U128(byte as u128)),
+                context: 0u32,
+            })
+            .collect();
+        scale_value::Value {
+            value: scale_value::ValueDef::Composite(scale_value::Composite::Unnamed(items)),
+            context: 0u32,
+        }
+    }
+
+    /// A 32-byte field whose runtime `type_name` says it's a hash
+    /// (`[u8; 32]`, `T::Hash`, etc.) must render as `0x…` hex — the
+    /// regression that flagged this fix was ATS `commitment: [u8; 32]`
+    /// being SS58-encoded and shown as a fake account address.
+    #[cfg(not(feature = "mock"))]
+    #[test]
+    fn render_value_hashes_non_account_thirty_two_byte_fields() {
+        let v = thirty_two_byte_composite(0xab);
+        assert_eq!(render_value(&v, Some("[u8; 32]"), 42), format!("0x{}", "ab".repeat(32)));
+        assert_eq!(render_value(&v, Some("T::Hash"), 42), format!("0x{}", "ab".repeat(32)));
+        // Missing type_name is the safe default: hex, not SS58.
+        assert_eq!(render_value(&v, None, 42), format!("0x{}", "ab".repeat(32)));
+    }
+
+    /// Counterpart to the hash test: a 32-byte field with an
+    /// account-bearing `type_name` must keep producing SS58. Pinning
+    /// this stops a future tightening of `is_account_like_type_name`
+    /// from accidentally reverting the `dest`/`who` rendering.
+    #[cfg(not(feature = "mock"))]
+    #[test]
+    fn render_value_ss58_encodes_account_thirty_two_byte_fields() {
+        let v = thirty_two_byte_composite(0x00);
+        let out = render_value(&v, Some("T::AccountId"), 42);
+        assert!(
+            out.starts_with("5") && out.len() >= 47,
+            "expected SS58 (prefix 42), got {out:?}",
+        );
     }
 
     /// Real-world `Balances.transfer_allow_death` payload captured from
