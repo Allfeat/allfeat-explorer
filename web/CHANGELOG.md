@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.3.1...web-v0.3.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* **web:** render active network token symbol everywhere instead of AFT ([83dc976](https://github.com/Allfeat/allfeat-explorer/commit/83dc97634d91179b3d0aebc4546df2f5d5525778)), closes [#8](https://github.com/Allfeat/allfeat-explorer/issues/8)
+
 ## [0.3.1](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.3.0...web-v0.3.1) (2026-04-27)
 
 
