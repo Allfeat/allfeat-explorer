@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.1...backend-v0.3.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* **api:** render non-account 32-byte event fields as hex, not SS58 ([675eabb](https://github.com/Allfeat/allfeat-explorer/commit/675eabb9d87628f0c1b3a8690bc2a710401573a0))
+* **api:** use MEL as Melodie native token symbol ([43a1bf7](https://github.com/Allfeat/allfeat-explorer/commit/43a1bf752875255b222ec12886946db9fd80cfa6)), closes [#8](https://github.com/Allfeat/allfeat-explorer/issues/8)
+
 ## [0.3.1](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.0...backend-v0.3.1) (2026-05-06)
 
 
