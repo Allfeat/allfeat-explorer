@@ -131,7 +131,7 @@ pub const MELODIE: NetworkSpec = NetworkSpec {
     name: "Melodie",
     kind: "Testnet",
     testnet: true,
-    token: "AFT",
+    token: "MEL",
     block_time_secs: 3,
     spec_version: 1_002_011,
     spec_name: "melodie",
