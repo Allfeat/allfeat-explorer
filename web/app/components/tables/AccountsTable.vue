@@ -13,6 +13,8 @@ defineProps<{
 }>()
 
 const { to } = useNetworkLink()
+const { spec } = useActiveNetwork()
+const tokenSymbol = computed(() => spec.value?.token ?? '')
 
 function openAccount(address: string) {
   navigateTo(to(`/accounts/${address}`))
@@ -55,7 +57,7 @@ function supplyPct(balance: string, supply: string): string {
       >
         <td><span class="mono dim">#{{ i + 1 }}</span></td>
         <td data-label="Account"><Addr :text="a.address" /></td>
-        <td data-label="Balance" class="right mono balance-cell">{{ fmtAFT(a.balance.total, 12, 2) }} AFT</td>
+        <td data-label="Balance" class="right mono balance-cell">{{ fmtAFT(a.balance.total, 12, 2) }} {{ tokenSymbol }}</td>
         <td data-label="% supply" class="right mono text-xs dim">
           {{ supplyPct(a.balance.total, totalSupplyPlanck ?? DEFAULT_TOTAL_SUPPLY) }}
         </td>

@@ -147,9 +147,9 @@ function buildExtrinsicHit(x: Extrinsic): SearchHit {
   }
 }
 
-function buildAccountHit(a: Account, knownLabel: string | null): SearchHit {
+function buildAccountHit(a: Account, knownLabel: string | null, tokenSymbol: string): SearchHit {
   const title = knownLabel ?? shortAddr(a.address)
-  const balance = `${fmtAFT(a.balance.total, 12, 2)} AFT`
+  const balance = `${fmtAFT(a.balance.total, 12, 2)} ${tokenSymbol}`
   return {
     kind: 'account',
     to: `/accounts/${a.address}`,
@@ -194,7 +194,7 @@ function buildAtsHit(r: AtsRecord): SearchHit {
 }
 
 export function useSearch(): UseSearchReturn {
-  const { id: activeId } = useActiveNetwork()
+  const { id: activeId, spec } = useActiveNetwork()
   const live = useLiveStore()
 
   const query = ref('')
@@ -279,9 +279,10 @@ export function useSearch(): UseSearchReturn {
     if (detected.kinds.has('account') && detected.asAddress && !accountsSeen.has(detected.asAddress)) {
       const addr = detected.asAddress
       const knownLabel = lookupKnownAccount(net, addr)?.name ?? null
+      const token = spec.value?.token ?? ''
       jobs.push(probe<Account>(path.account(net, addr), signal).then(a => {
         if (a) {
-          acc.accounts.push(buildAccountHit(a, knownLabel))
+          acc.accounts.push(buildAccountHit(a, knownLabel, token))
         } else {
           acc.accounts.push(buildInactiveAccountHit(addr, knownLabel))
         }

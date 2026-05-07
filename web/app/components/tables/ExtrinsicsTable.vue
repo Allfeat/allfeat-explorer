@@ -14,6 +14,8 @@ defineProps<{
 }>()
 
 const { to } = useNetworkLink()
+const { spec } = useActiveNetwork()
+const tokenSymbol = computed(() => spec.value?.token ?? '')
 
 function openExtrinsic(id: string) {
   navigateTo(to(`/extrinsics/${id}`))
@@ -90,14 +92,14 @@ function transferOf(ext: Extrinsic): { dest: string, value: string } | null {
             <Addr :text="e.signer" />
             <span class="transfer-arrow">
               <span aria-hidden="true">↓</span>
-              <span class="transfer-amount mono">{{ fmtAFT(transferOf(e)!.value, 12, 6) }} AFT</span>
+              <span class="transfer-amount mono">{{ fmtAFT(transferOf(e)!.value, 12, 6) }} {{ tokenSymbol }}</span>
             </span>
             <Addr :text="transferOf(e)!.dest" />
           </div>
           <Addr v-else-if="e.signer" :text="e.signer" />
           <span v-else class="dim text-xs">—</span>
         </td>
-        <td data-label="Fee" class="right mono text-xs">{{ fmtAFT(e.fee, 12, 6) }} AFT</td>
+        <td data-label="Fee" class="right mono text-xs">{{ fmtAFT(e.fee, 12, 6) }} {{ tokenSymbol }}</td>
         <td data-label="Result"><StatusPill :result="e.result === 'Success' ? 'success' : 'failed'" /></td>
         <td data-label="Time" class="right">
           <span class="mono text-xs dim"><TimeAgo :timestamp="e.timestamp_ms" /></span>

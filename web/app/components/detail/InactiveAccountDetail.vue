@@ -23,6 +23,7 @@ const network = useActiveNetwork()
 
 const networkPrefix = computed(() => network.spec.value?.ss58_prefix ?? GENERIC_SS58_PREFIX)
 const canToggleFormat = computed(() => networkPrefix.value !== GENERIC_SS58_PREFIX)
+const tokenSymbol = computed(() => network.spec.value?.token ?? '')
 
 const addressFormat = ref<AddressFormat>('mainnet')
 
@@ -66,7 +67,7 @@ const displayAddress = computed(() => {
             <div class="ui-label">Balance</div>
             <div class="inactive-zero-val">
               0
-              <span class="inactive-zero-unit">AFT</span>
+              <span class="inactive-zero-unit">{{ tokenSymbol }}</span>
             </div>
           </div>
         </div>

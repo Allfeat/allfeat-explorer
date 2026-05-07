@@ -70,7 +70,7 @@ const displayAddress = computed(() => {
       <div class="panel">
         <div class="panel-head">
           <h3>Balance</h3>
-          <span class="tag">AFT · Native</span>
+          <span class="tag">{{ tokenSymbol }} · Native</span>
         </div>
         <div style="padding: 24px;">
           <div class="balance-row">
@@ -83,21 +83,21 @@ const displayAddress = computed(() => {
               <div class="ui-label">Total</div>
               <div class="balance-total">
                 {{ fmtAFT(account.balance.total, 12, 2) }}
-                <span style="color: var(--ink-dimmer); font-size: 20px;">AFT</span>
+                <span style="color: var(--ink-dimmer); font-size: 20px;">{{ tokenSymbol }}</span>
               </div>
               <div style="margin-top: 18px; display: flex; flex-direction: column; gap: 8px;">
                 <div class="bal-row">
                   <span class="swatch swatch-teal" />
                   <span style="flex: 1;">Transferable</span>
                   <span class="mono" style="font-weight: 600; white-space: nowrap;">
-                    {{ fmtAFT(account.balance.transferable, 12, 2) }} AFT
+                    {{ fmtAFT(account.balance.transferable, 12, 2) }} {{ tokenSymbol }}
                   </span>
                 </div>
                 <div class="bal-row">
                   <span class="swatch swatch-red" />
                   <span style="flex: 1;">Reserved</span>
                   <span class="mono" style="font-weight: 600; white-space: nowrap;">
-                    {{ fmtAFT(account.balance.reserved, 12, 2) }} AFT
+                    {{ fmtAFT(account.balance.reserved, 12, 2) }} {{ tokenSymbol }}
                   </span>
                 </div>
               </div>
@@ -166,7 +166,7 @@ const displayAddress = computed(() => {
             <td data-label="Created" class="right">
               <span class="mono text-xs dim"><TimeAgo :timestamp="record.created_at_ms" /></span>
             </td>
-            <td data-label="Deposit" class="right mono text-xs">{{ fmtAFT(record.total_deposit, 12, 4) }} AFT</td>
+            <td data-label="Deposit" class="right mono text-xs">{{ fmtAFT(record.total_deposit, 12, 4) }} {{ tokenSymbol }}</td>
           </tr>
         </tbody>
       </table>

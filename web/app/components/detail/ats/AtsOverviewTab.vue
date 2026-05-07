@@ -12,6 +12,8 @@ const props = defineProps<{
 }>()
 
 const { blockHref, extrinsicHref, accountHref } = useNetworkLink()
+const { spec } = useActiveNetwork()
+const tokenSymbol = computed(() => spec.value?.token ?? '')
 
 const versionCount = computed(() => props.record.version_count)
 const multiVersion = computed(() => versionCount.value > 1)
@@ -84,10 +86,10 @@ const totalDepositors = computed(() => props.record.deposits.length)
           <span class="mono">{{ fmtUtcTime(selected.created_at_ms) }}</span>
         </KvRow>
         <KvRow label="Fee paid">
-          <span class="mono">{{ fmtAFT(selected.fee, 12, 6) }} AFT</span>
+          <span class="mono">{{ fmtAFT(selected.fee, 12, 6) }} {{ tokenSymbol }}</span>
         </KvRow>
         <KvRow label="Total deposits bonded">
-          <span class="mono">{{ fmtAFT(record.total_deposit, 12, 2) }} AFT</span>
+          <span class="mono">{{ fmtAFT(record.total_deposit, 12, 2) }} {{ tokenSymbol }}</span>
           <span class="dim"> · {{ totalDepositors }} depositor{{ totalDepositors !== 1 ? 's' : '' }}</span>
         </KvRow>
         <KvRow label="Status">

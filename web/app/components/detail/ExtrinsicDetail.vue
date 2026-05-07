@@ -19,6 +19,8 @@ const props = defineProps<{
 
 const route = useRoute()
 const { blockHref, accountHref } = useNetworkLink()
+const { spec } = useActiveNetwork()
+const tokenSymbol = computed(() => spec.value?.token ?? '')
 
 function isDecoded(args: ExtrinsicArgs): args is { Decoded: { fields: CallField[] } } {
   return 'Decoded' in args
@@ -47,7 +49,7 @@ function renderFieldValue(field: CallField): { primary: string, secondary?: stri
     if (Number.isFinite(ms)) return { primary: fmtUtcTime(ms), secondary: `${fmtInt(ms)} ms` }
   }
   if ((m === 'Balances' || m === 'balances') && c.startsWith('transfer') && field.name === 'value') {
-    return { primary: `${fmtAFT(field.value, 12, 6)} AFT`, secondary: `${fmtInt(field.value)} planck` }
+    return { primary: `${fmtAFT(field.value, 12, 6)} ${tokenSymbol.value}`, secondary: `${fmtInt(field.value)} planck` }
   }
   return { primary: field.value }
 }
@@ -113,10 +115,10 @@ const rawJson = computed<string>(() => JSON.stringify(props.extrinsic, null, 2))
             <span class="mono">{{ fmtInt(extrinsic.nonce ?? 0) }}</span>
           </KvRow>
           <KvRow label="Tip">
-            <span class="mono">{{ fmtAFT(extrinsic.tip) }} AFT</span>
+            <span class="mono">{{ fmtAFT(extrinsic.tip) }} {{ tokenSymbol }}</span>
           </KvRow>
           <KvRow label="Fee">
-            <span class="mono">{{ fmtAFT(extrinsic.fee, 12, 9) }} AFT</span>
+            <span class="mono">{{ fmtAFT(extrinsic.fee, 12, 9) }} {{ tokenSymbol }}</span>
             <span class="dim"> ({{ fmtInt(extrinsic.fee) }} planck)</span>
           </KvRow>
         </Kv>

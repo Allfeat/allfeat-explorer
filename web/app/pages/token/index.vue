@@ -106,7 +106,7 @@ const envelopesByCategory = computed(() => {
       <h3 style="margin-top: 0;">Not available on this network</h3>
       <p class="dim">
         The token allocation pallet ships in the Allfeat mainnet runtime only.
-        Switch to Allfeat (top-right) to see the {{ spec?.token ?? 'AFT' }} supply breakdown.
+        Switch to Allfeat (top-right) to see the AFT supply breakdown.
       </p>
     </div>
 
