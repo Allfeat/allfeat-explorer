@@ -34,7 +34,6 @@
 //! decode, then delegates to [`project`].
 
 use subxt::client::OnlineClientAtBlock;
-use subxt::events::Phase;
 use subxt::SubstrateConfig;
 
 use crate::data::error::{DataError, DataResult};
@@ -544,14 +543,15 @@ pub async fn project_block(
     let mut touched_accounts: Vec<[u8; 32]> = Vec::new();
     for (idx, evt) in events.iter().enumerate() {
         let evt = evt.map_err(|e| DataError::Decode(format!("decode event: {e}")))?;
-        // Init/finalization phases never emit balance movements in
-        // practice (Substrate balances are only adjusted in extrinsic
-        // application or fee accounting); skip them defensively so a
-        // future runtime emitting one doesn't slip through with a
-        // misleading event_idx attribution.
-        if !matches!(evt.phase(), Phase::ApplyExtrinsic(_)) {
-            continue;
-        }
+        // Process events from every phase, not just `ApplyExtrinsic`.
+        // `pallet-token-allocation` auto-distributes vested funds in
+        // `on_initialize` at each epoch boundary; the resulting
+        // `Balances::Released` events sit in `Phase::Initialization`.
+        // Skipping them left the beneficiary out of `touched_accounts`,
+        // so the snapshot pipeline never refetched `System::Account` and
+        // the DB kept the genesis-state `free`/`reserved` indefinitely.
+        // `event_idx` is the event's position in the block-wide vector,
+        // so it stays a unique key regardless of which phase emitted it.
         if let Some(d) = decode_balance_event(&evt, &mut touched_accounts, runtime_kind)? {
             decoded.push((idx as u32, d));
         }
