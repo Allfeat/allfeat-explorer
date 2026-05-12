@@ -34,6 +34,26 @@ const totalReleased = computed<string>(() => {
   return sum.toString()
 })
 
+const totalUpfront = computed<bigint>(() => {
+  let sum = 0n
+  for (const a of props.allocations) sum += toBigIntSafe(a.upfront)
+  return sum
+})
+
+// Tokens beneficiaries have actually received: upfront paid at allocation
+// time + everything auto-released through vesting since then. `totalReleased`
+// covers only the vested portion, so this is what to surface to contributors
+// reconciling against their wallet / CEX statement.
+const totalDistributed = computed<bigint>(() => {
+  let sum = 0n
+  for (const a of props.allocations) {
+    sum += toBigIntSafe(a.upfront) + toBigIntSafe(a.released)
+  }
+  return sum
+})
+
+const hasAnyUpfront = computed<boolean>(() => totalUpfront.value > 0n)
+
 const totalAllocated = computed<string>(() => {
   let sum = 0n
   for (const a of props.allocations) sum += toBigIntSafe(a.total)
@@ -91,6 +111,15 @@ const totalNextEpoch = computed<bigint>(() => {
   for (const a of props.allocations) sum += nextEpochReceive(a)
   return sum
 })
+
+function distributedFor(a: Allocation): bigint {
+  return toBigIntSafe(a.upfront) + toBigIntSafe(a.released)
+}
+
+function distributedTitle(a: Allocation): string {
+  if (toBigIntSafe(a.upfront) === 0n) return ''
+  return `Upfront ${fmtAFT(a.upfront, props.decimals, 2)} + Vested ${fmtAFT(a.released, props.decimals, 2)}`
+}
 
 const hasEpochData = computed(() =>
   props.epoch !== null && props.epoch !== undefined && (props.envelopes?.length ?? 0) > 0,
@@ -199,7 +228,10 @@ const summaryCliffLabel = computed<string>(() =>
       </div>
       <div class="alloc-summary-cell">
         <div class="ui-label">Distributed so far</div>
-        <div class="alloc-summary-amount">{{ fmtAFT(totalReleased, decimals, 2) }}</div>
+        <div class="alloc-summary-amount">{{ fmtAFT(totalDistributed, decimals, 2) }}</div>
+        <div v-if="hasAnyUpfront" class="alloc-summary-breakdown">
+          Upfront {{ fmtAFT(totalUpfront, decimals, 2) }} · Vested {{ fmtAFT(totalReleased, decimals, 2) }}
+        </div>
       </div>
       <div class="alloc-summary-cell alloc-summary-next">
         <div class="alloc-summary-next-head">
@@ -242,8 +274,8 @@ const summaryCliffLabel = computed<string>(() =>
           <td data-label="Total" class="right mono">
             {{ fmtAFT(a.total, decimals, 2) }} {{ symbol }}
           </td>
-          <td data-label="Distributed" class="right mono">
-            {{ fmtAFT(a.released, decimals, 2) }}
+          <td data-label="Distributed" class="right mono" :title="distributedTitle(a)">
+            {{ fmtAFT(distributedFor(a), decimals, 2) }}
           </td>
           <td data-label="Next distribution" class="right mono">
             <span v-if="isInCliff(a)" class="cliff-cell">
@@ -319,6 +351,14 @@ const summaryCliffLabel = computed<string>(() =>
   color: var(--ink-dim);
   letter-spacing: 0.02em;
   margin-top: 2px;
+}
+
+.alloc-summary-breakdown {
+  font-size: 11.5px;
+  color: var(--ink-dim);
+  letter-spacing: 0.02em;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
 }
 
 .next-epoch-dot {
