@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.3.2...web-v0.3.3) (2026-05-12)
+
+
+### Bug Fixes
+
+* **web:** include upfront in 'Distributed so far' on account page ([9d80f34](https://github.com/Allfeat/allfeat-explorer/commit/9d80f345a25f580ae0662066c1d94f634574dfb9))
+
 ## [0.3.2](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.3.1...web-v0.3.2) (2026-05-07)
 
 
