@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.2...backend-v0.3.3) (2026-05-12)
+
+
+### Bug Fixes
+
+* **api:** index balance events from all phases, not just ApplyExtrinsic ([4f0c539](https://github.com/Allfeat/allfeat-explorer/commit/4f0c539f464051b2966d5c3085c00b96a06f7348))
+
 ## [0.3.2](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.1...backend-v0.3.2) (2026-05-07)
 
 
