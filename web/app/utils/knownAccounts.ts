@@ -97,6 +97,10 @@ const STATIC_REGISTRY: Record<string, NetworkRegistry> = {
       name: 'Allfeat Foundation 2',
       kind: 'validator',
     },
+    qSyiGBEyMGAdC4oxUvDZVAAiCqDswfVyw4FsmkLnvmmnwB1mx: {
+      name: 'exa_Validator',
+      kind: 'validator',
+    },
   },
   melodie: {
     ...DEV_ACCOUNTS,
