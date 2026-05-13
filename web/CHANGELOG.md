@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.3.3...web-v0.4.0) (2026-05-13)
+
+
+### Features
+
+* **web:** add exa_Validator to known accounts registry ([1522f5d](https://github.com/Allfeat/allfeat-explorer/commit/1522f5d90c7e5d6a9d83eaea8fc37bf54251be4f))
+
 ## [0.3.3](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.3.2...web-v0.3.3) (2026-05-12)
 
 
