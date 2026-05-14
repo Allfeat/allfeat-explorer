@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.4.0...web-v0.4.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **web:** carry version index through ATS feed-row navigation ([5d49b6a](https://github.com/Allfeat/allfeat-explorer/commit/5d49b6aab4367a1f0886a2efe2815c2d743126be))
+
 ## [0.4.0](https://github.com/Allfeat/allfeat-explorer/compare/web-v0.3.3...web-v0.4.0) (2026-05-13)
 
 
