@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.3...backend-v0.3.4) (2026-05-14)
+
+
+### Bug Fixes
+
+* **api:** order /ats/feed by block-time, not by ats_id ([a5eeebb](https://github.com/Allfeat/allfeat-explorer/commit/a5eeebbecc4bd3fcafcd6e430c2c374c83eb1bc4))
+
 ## [0.3.3](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.2...backend-v0.3.3) (2026-05-12)
 
 
