@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.4...backend-v0.3.5) (2026-05-14)
+
+
+### Bug Fixes
+
+* **api:** invalidate head runtime caches on spec_version change ([b8fd09c](https://github.com/Allfeat/allfeat-explorer/commit/b8fd09caac437d3a2539d04cd6246bb1ffb9f2f5))
+
 ## [0.3.4](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.3...backend-v0.3.4) (2026-05-14)
 
 
