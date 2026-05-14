@@ -34,8 +34,13 @@ const groups = computed<DateGroup[]>(() => {
     .map(([date, items]) => ({ date, items }))
 })
 
-function openAts(atsId: number) {
-  navigateTo(to(`/ats/${atsId}`))
+function openAts(a: AtsFeedItem) {
+  // Carry the version through so a v1 row doesn't silently land on the
+  // default-latest view (the AtsDetail page falls back to versionCount-1
+  // when `?v=` is absent). Without this, every click on a non-latest
+  // version of the same ats_id sends the user to the latest version's
+  // data — including its extrinsic link.
+  navigateTo(to(`/ats/${a.ats_id}`, { v: String(a.version_index + 1) }))
 }
 
 function rowLabel(a: AtsFeedItem): string {
@@ -76,8 +81,8 @@ function fmtClock(ms: number): string {
           role="link"
           tabindex="0"
           :aria-label="`Open ATS registration ${a.ats_id}`"
-          @click="openAts(a.ats_id)"
-          @keydown.enter.space.prevent="openAts(a.ats_id)"
+          @click="openAts(a)"
+          @keydown.enter.space.prevent="openAts(a)"
         >
           <AtsWave :commitment="a.commitment" :bars="22" :height="22" />
 

@@ -11,6 +11,13 @@ defineProps<{
 const { queryString, to } = useNetworkLink()
 const addrLabel = useAddrLabel()
 
+// Keep the row link version-aware: without `?v=` the detail page falls
+// back to the latest version, so a v1 row would silently route to v2's
+// extrinsic / commitment / signer.
+function atsRowTarget(a: AtsFeedItem) {
+  return to(`/ats/${a.ats_id}`, { v: String(a.version_index + 1) })
+}
+
 function atsRowLabel(a: AtsFeedItem): string {
   if (a.version_count <= 1) return 'registration'
   if (a.is_initial) return 'initial registration'
@@ -31,7 +38,7 @@ function atsRowLabel(a: AtsFeedItem): string {
       <NuxtLink
         v-for="a in items.slice(0, 6)"
         :key="`${a.ats_id}-${a.version_index}`"
-        :to="to(`/ats/${a.ats_id}`)"
+        :to="atsRowTarget(a)"
         class="ats-list-row row-fade-in"
       >
         <div class="ats-list-main">

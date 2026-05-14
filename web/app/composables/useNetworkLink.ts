@@ -22,7 +22,7 @@ type EntityId = string | number | bigint
 export interface UseNetworkLink {
   query: ComputedRef<{ network?: string }>
   queryString: ComputedRef<string>
-  to: (path: string) => RouteLocationRaw
+  to: (path: string, extraQuery?: Record<string, string>) => RouteLocationRaw
   blockHref: (n: EntityId) => string
   accountHref: (addr: string) => string
   extrinsicHref: (id: string) => string
@@ -41,8 +41,11 @@ export function useNetworkLink(): UseNetworkLink {
     activeId.value ? `?network=${activeId.value}` : '',
   )
 
-  function to(path: string): RouteLocationRaw {
-    return { path, query: query.value }
+  function to(path: string, extraQuery?: Record<string, string>): RouteLocationRaw {
+    return {
+      path,
+      query: extraQuery ? { ...query.value, ...extraQuery } : query.value,
+    }
   }
 
   const href = (section: string) => (id: EntityId) =>
