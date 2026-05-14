@@ -481,7 +481,10 @@ impl ChainData for MockProvider {
         let mut filtered: Vec<AtsFeedItem> = raw
             .into_iter()
             .filter(|item| match cursor {
-                Some(c) => (item.ats_id, item.version_index) < (c.ats_id, c.version),
+                Some(c) => {
+                    (item.block_number, item.ats_id, item.version_index)
+                        < (c.block_num, c.ats_id, c.version)
+                }
                 None => true,
             })
             .collect();
@@ -492,6 +495,7 @@ impl ChainData for MockProvider {
         let next_cursor = if has_more {
             filtered.last().map(|item| {
                 AtsFeedCursor {
+                    block_num: item.block_number,
                     ats_id: item.ats_id,
                     version: item.version_index,
                 }

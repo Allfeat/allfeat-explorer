@@ -25,7 +25,7 @@
 //! /transfers                  <block>-<event_idx>   12345-7
 //! /events                     <block>-<phase>-<idx> 12345-A-3
 //! /ats, /accounts/.../ats     <id>                  42
-//! /ats/feed                   <ats_id>-<version>    42-3
+//! /ats/feed                   <block>-<ats_id>-<ver> 100-42-3
 //! ```
 
 use std::fmt;
@@ -285,17 +285,23 @@ impl FromStr for AtsCursor {
 
 // ── /ats/feed ───────────────────────────────────────────────────────────────
 
-/// Cursor for `/ats/feed`. Format: `<ats_id>-<version>`. Ordering is
-/// `(ats_id, version) < (cursor.ats_id, cursor.version)` lexico.
+/// Cursor for `/ats/feed`. Format: `<block_num>-<ats_id>-<version>`.
+/// Ordering is strict time-first newest-first:
+/// `(block_num, ats_id, version) < cursor` lexico. The `block_num`
+/// component is what lets a new version of an old ATS sort to the top
+/// alongside fresh registrations from the same block window — a sort by
+/// `ats_id` alone would push the update behind every later-registered
+/// ATS even though it's chronologically newer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AtsFeedCursor {
+    pub block_num: u64,
     pub ats_id: u32,
     pub version: u32,
 }
 
 impl fmt::Display for AtsFeedCursor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}", self.ats_id, self.version)
+        write!(f, "{}-{}-{}", self.block_num, self.ats_id, self.version)
     }
 }
 
@@ -303,16 +309,28 @@ impl FromStr for AtsFeedCursor {
     type Err = CursorParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (a, v) = s
-            .split_once('-')
-            .ok_or_else(|| err(s, "<ats_id>-<version>"))?;
+        const EXPECTED: &str = "<block_num>-<ats_id>-<version>";
+        let mut parts = s.splitn(3, '-');
+        let b = parts.next().ok_or_else(|| err(s, EXPECTED))?;
+        let a = parts.next().ok_or_else(|| err(s, EXPECTED))?;
+        let v = parts.next().ok_or_else(|| err(s, EXPECTED))?;
+        if parts.next().is_some() {
+            return Err(err(s, EXPECTED));
+        }
+        let block_num = b
+            .parse::<u64>()
+            .map_err(|_| err(s, "<block_num>-<ats_id>-<version> (block_num must be u64)"))?;
         let ats_id = a
             .parse::<u32>()
-            .map_err(|_| err(s, "<ats_id>-<version> (ats_id must be u32)"))?;
+            .map_err(|_| err(s, "<block_num>-<ats_id>-<version> (ats_id must be u32)"))?;
         let version = v
             .parse::<u32>()
-            .map_err(|_| err(s, "<ats_id>-<version> (version must be u32)"))?;
-        Ok(AtsFeedCursor { ats_id, version })
+            .map_err(|_| err(s, "<block_num>-<ats_id>-<version> (version must be u32)"))?;
+        Ok(AtsFeedCursor {
+            block_num,
+            ats_id,
+            version,
+        })
     }
 }
 
@@ -464,26 +482,30 @@ mod tests {
     fn ats_feed_cursor_roundtrips() {
         roundtrip(
             AtsFeedCursor {
+                block_num: 100,
                 ats_id: 42,
                 version: 3,
             },
-            "42-3",
+            "100-42-3",
         );
         roundtrip(
             AtsFeedCursor {
+                block_num: 0,
                 ats_id: 0,
                 version: 0,
             },
-            "0-0",
+            "0-0-0",
         );
     }
 
     #[test]
     fn ats_feed_cursor_rejects_garbage() {
         assert!("42".parse::<AtsFeedCursor>().is_err());
+        assert!("42-3".parse::<AtsFeedCursor>().is_err());
         assert!("42-".parse::<AtsFeedCursor>().is_err());
         assert!("-3".parse::<AtsFeedCursor>().is_err());
-        assert!("abc-3".parse::<AtsFeedCursor>().is_err());
+        assert!("abc-3-1".parse::<AtsFeedCursor>().is_err());
+        assert!("1-2-3-4".parse::<AtsFeedCursor>().is_err());
     }
 
     #[test]

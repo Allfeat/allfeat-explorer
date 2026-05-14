@@ -216,12 +216,14 @@ pub async fn list_ats_page(
 }
 
 /// Flat version feed across every ATS on `network_id`, ordered by
-/// `(ats_id DESC, version DESC)` — which is the ordering the
-/// [`AtsFeedCursor`] grammar expects (`(id, version) < cursor` lex).
-/// A given ATS's versions descend together; a newer ATS sorts above an
-/// older one even if the older one just got a new version. That's a
-/// tiny ordering divergence from strict block-time newest-first, but
-/// keeps cursor arithmetic monotonic and is what the plan prescribes.
+/// `(block_num DESC, ats_id DESC, version DESC)` — strict block-time
+/// newest-first, with `(ats_id, version)` as the tie-breaker for events
+/// landing in the same block. The [`AtsFeedCursor`] grammar embeds the
+/// same 3-tuple so cursor arithmetic stays monotonic. Sorting by
+/// `ats_id` alone (the previous design) buried a new version of an
+/// older ATS behind every later-registered ATS even though it was
+/// chronologically newer — exactly what bit ATS#15 v2 in prod once a
+/// higher-id ATS#16 was registered around the same window.
 pub async fn list_ats_feed_page(
     pool: &PgPool,
     network_sid: i16,
@@ -245,11 +247,12 @@ pub async fn list_ats_feed_page(
              JOIN ats_registry r ON r.network_id = v.network_id AND r.id = v.ats_id \
              LEFT JOIN blocks b ON b.network_id = v.network_id AND b.num = v.block_num \
              LEFT JOIN extrinsics x ON x.network_id = v.network_id AND x.block_num = v.block_num AND x.idx = v.ext_idx \
-             WHERE v.network_id = $1 AND (v.ats_id, v.version) < ($2, $3) \
-             ORDER BY v.ats_id DESC, v.version DESC \
-             LIMIT $4",
+             WHERE v.network_id = $1 AND (v.block_num, v.ats_id, v.version) < ($2, $3, $4) \
+             ORDER BY v.block_num DESC, v.ats_id DESC, v.version DESC \
+             LIMIT $5",
         )
         .bind(network_sid)
+        .bind(c.block_num as i64)
         .bind(c.ats_id as i64)
         .bind(c.version as i32)
         .bind(probe)
@@ -265,7 +268,7 @@ pub async fn list_ats_feed_page(
              LEFT JOIN blocks b ON b.network_id = v.network_id AND b.num = v.block_num \
              LEFT JOIN extrinsics x ON x.network_id = v.network_id AND x.block_num = v.block_num AND x.idx = v.ext_idx \
              WHERE v.network_id = $1 \
-             ORDER BY v.ats_id DESC, v.version DESC \
+             ORDER BY v.block_num DESC, v.ats_id DESC, v.version DESC \
              LIMIT $2",
         )
         .bind(network_sid)
@@ -286,6 +289,7 @@ pub async fn list_ats_feed_page(
     let next_cursor = if has_more {
         probed.last().map(|item| {
             AtsFeedCursor {
+                block_num: item.block_number,
                 ats_id: item.ats_id,
                 version: item.version_index,
             }

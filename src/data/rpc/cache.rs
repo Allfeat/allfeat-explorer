@@ -54,7 +54,7 @@ pub type LatestExtrinsicsKey = (
 pub type LatestTransfersKey = (u32, Option<(u64, u32)>, (Option<String>, Option<String>));
 pub type LatestEventsKey = (u32, Option<(u64, u32)>, (Option<String>, Option<String>));
 /// `(count, (ats_id, version)-cursor)` key for the ATS version feed.
-pub type AtsVersionFeedKey = (u32, Option<(u32, u32)>);
+pub type AtsVersionFeedKey = (u32, Option<(u64, u32, u32)>);
 
 /// Staleness budget for hot entries, in seconds. Kept below the fastest
 /// configured block time (Melodie: 3s) so a cached head is at most one block
@@ -137,7 +137,9 @@ pub struct Caches {
     /// list. Cursor is the newest-first ATS id.
     pub ats_list: Cache<(u32, Option<u32>), Page<AtsRecord>>,
     /// `(count, cursor) → Page<AtsFeedItem>` for the version feed.
-    /// Cursor is `(ats_id, version)` lex.
+    /// Cursor is `(block_num, ats_id, version)` lex — time-first so a
+    /// new version of an older ATS sorts ahead of a freshly-registered
+    /// higher-id one.
     pub ats_version_feed: Cache<AtsVersionFeedKey, Page<AtsFeedItem>>,
     /// `(address, count, cursor) → Page<AtsRecord>` for the
     /// owner-scoped ATS list.

@@ -841,13 +841,16 @@ impl ChainData for RpcProvider {
         cached(
             cache,
             "ats_version_feed",
-            (count, cursor.map(|c| (c.ats_id, c.version))),
+            (
+                count,
+                cursor.map(|c| (c.block_num, c.ats_id, c.version)),
+            ),
             async move {
                 let api = client_for_load.subxt().await?;
                 let at = race_timeout("at_current_block", api.at_current_block())
                     .await?
                     .map_err(|e| DataError::Rpc(format!("at_current_block: {e}")))?;
-                // The RPC feed walker doesn't know about `(ats_id,
+                // The RPC feed walker doesn't know about `(block, ats_id,
                 // version)` cursors natively, so we ask it for a
                 // generous buffer and filter in-memory. This is fine
                 // for the RPC fallback path — it's only ever hit on
@@ -867,7 +870,10 @@ impl ChainData for RpcProvider {
                 let mut filtered: Vec<AtsFeedItem> = raw
                     .into_iter()
                     .filter(|item| match cursor {
-                        Some(c) => (item.ats_id, item.version_index) < (c.ats_id, c.version),
+                        Some(c) => {
+                            (item.block_number, item.ats_id, item.version_index)
+                                < (c.block_num, c.ats_id, c.version)
+                        }
                         None => true,
                     })
                     .collect();
@@ -878,6 +884,7 @@ impl ChainData for RpcProvider {
                 let next_cursor = if has_more {
                     filtered.last().map(|item| {
                         AtsFeedCursor {
+                            block_num: item.block_number,
                             ats_id: item.ats_id,
                             version: item.version_index,
                         }
