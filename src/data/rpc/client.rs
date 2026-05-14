@@ -244,6 +244,50 @@ enum StreamExit {
     HeadRxDropped,
 }
 
+/// Bundled `Arc` handles for the head-path runtime caches the watcher
+/// invalidates when it detects a runtime upgrade. Cloning is cheap —
+/// every field is already shared with the owning [`RpcClient`].
+///
+/// The watcher only needs these for the finalized-head pass, where a
+/// `spec_version` change between consecutive blocks signals a chain
+/// upgrade and forces the head caches to refresh. `invalidate()` on
+/// the owning client still clears the same slots on a reconnect, so
+/// the two code paths converge on identical state.
+#[derive(Clone)]
+struct WatcherCaches {
+    runtime_identity: Arc<RwLock<Option<RuntimeIdentity>>>,
+    runtime_code: Arc<RwLock<Option<RuntimeCodeInfo>>>,
+    block_time_secs: Arc<RwLock<Option<u64>>>,
+}
+
+impl WatcherCaches {
+    /// If a `RuntimeIdentity` is cached and its `spec_version` differs
+    /// from `live`, clear all three head caches so the next read
+    /// repopulates from chain state. No-op when nothing is cached — an
+    /// idle explorer pays nothing here.
+    async fn invalidate_if_spec_changed(&self, live: u32, block_number: u64) {
+        let cached = self
+            .runtime_identity
+            .read()
+            .await
+            .as_ref()
+            .map(|i| i.spec_version);
+        let Some(prev) = cached else { return };
+        if prev == live {
+            return;
+        }
+        *self.runtime_identity.write().await = None;
+        *self.runtime_code.write().await = None;
+        *self.block_time_secs.write().await = None;
+        tracing::info!(
+            from = prev,
+            to = live,
+            number = block_number,
+            "runtime upgrade detected, cleared head caches"
+        );
+    }
+}
+
 /// Initial backoff between restart attempts. Small enough that a fast
 /// recovery doesn't look stuck, large enough to avoid tight-looping on
 /// a node that rejects every connect.
@@ -669,6 +713,11 @@ impl RpcClient {
         let ss58_prefix = self.ss58_prefix;
         let network_id = self.network_id;
         let runtime_kind = self.runtime_kind;
+        let caches = WatcherCaches {
+            runtime_identity: self.runtime_identity_cache.clone(),
+            runtime_code: self.runtime_code_cache.clone(),
+            block_time_secs: self.block_time_secs_cache.clone(),
+        };
 
         tokio::spawn(async move {
             run_watcher_supervisor(
@@ -683,6 +732,7 @@ impl RpcClient {
                 network_id,
                 runtime_kind,
                 ss58_prefix,
+                caches,
             )
             .await;
             // Supervisor exits only when every watch receiver has been
@@ -724,6 +774,7 @@ async fn run_watcher_supervisor(
     network_id: &'static str,
     runtime_kind: RuntimeKind,
     ss58_prefix: u16,
+    caches: WatcherCaches,
 ) {
     let mut backoff = WATCHER_INITIAL_BACKOFF;
     loop {
@@ -754,6 +805,7 @@ async fn run_watcher_supervisor(
             network_id,
             runtime_kind,
             ss58_prefix,
+            &caches,
         )
         .await
         {
@@ -835,9 +887,10 @@ async fn run_streams(
     network_id: &'static str,
     runtime_kind: RuntimeKind,
     ss58_prefix: u16,
+    caches: &WatcherCaches,
 ) -> StreamExit {
     tokio::select! {
-        exit = run_finalized_head_watch(client, head_tx, blocks_tx, runtime_kind, ss58_prefix) => exit,
+        exit = run_finalized_head_watch(client, head_tx, blocks_tx, runtime_kind, ss58_prefix, caches) => exit,
         exit = run_best_stream(client, head_rx, best_head_tx, blocks_tx, transfers_tx, ats_feed_tx, network_id, runtime_kind, ss58_prefix) => exit,
     }
 }
@@ -855,6 +908,7 @@ async fn run_finalized_head_watch(
     blocks_tx: &broadcast::Sender<Block>,
     runtime_kind: RuntimeKind,
     ss58_prefix: u16,
+    caches: &WatcherCaches,
 ) -> StreamExit {
     let mut stream = match client.stream_blocks().await {
         Ok(s) => s,
@@ -875,6 +929,23 @@ async fn run_finalized_head_watch(
         let number = block.number();
         if head_tx.send(Some(number)).is_err() {
             return StreamExit::HeadRxDropped;
+        }
+
+        // Runtime-upgrade detection. The head-path runtime caches are
+        // populated on `/runtime` reads with `at=None` and otherwise
+        // only cleared on a WS reconnect. After a `set_code`, the
+        // chain bumps `spec_version` while the WS stays healthy, so
+        // without an explicit check the page keeps returning the old
+        // spec until the next disconnect. Skip the pin entirely when
+        // nothing is cached — idle explorers pay zero extra RPC.
+        let needs_check = caches.runtime_identity.read().await.is_some();
+        if needs_check {
+            match block.at().await {
+                Ok(at) => caches.invalidate_if_spec_changed(at.spec_version(), number).await,
+                Err(e) => {
+                    tracing::debug!(error = %e, number, "runtime upgrade check: at() failed");
+                }
+            }
         }
 
         // Re-emit as finalized only if someone's listening — an idle explorer
@@ -1187,5 +1258,80 @@ mod tests {
             matches!(err, DataError::Transport(_)),
             "expected Transport after retry, got {err:?}",
         );
+    }
+
+    fn sample_identity(spec: u32) -> RuntimeIdentity {
+        RuntimeIdentity {
+            spec_name: "allfeat".into(),
+            impl_name: "allfeat-allfeat".into(),
+            authoring_version: 1,
+            spec_version: spec,
+            impl_version: 0,
+            transaction_version: 1,
+            state_version: Some(1),
+        }
+    }
+
+    fn sample_code() -> RuntimeCodeInfo {
+        RuntimeCodeInfo {
+            hash: "0xdeadbeef".into(),
+            size_bytes: 570_438,
+            compressed: true,
+        }
+    }
+
+    fn empty_caches() -> WatcherCaches {
+        WatcherCaches {
+            runtime_identity: Arc::new(RwLock::new(None)),
+            runtime_code: Arc::new(RwLock::new(None)),
+            block_time_secs: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Spec match keeps the cache populated — invalidation only fires on a
+    /// real upgrade. Without this guard, every finalized block would clear
+    /// the cache and force a `Core_version` round-trip per `/runtime` read.
+    #[tokio::test]
+    async fn watcher_caches_keep_state_when_spec_matches() {
+        let caches = empty_caches();
+        *caches.runtime_identity.write().await = Some(sample_identity(201));
+        *caches.runtime_code.write().await = Some(sample_code());
+        *caches.block_time_secs.write().await = Some(6);
+
+        caches.invalidate_if_spec_changed(201, 1_441_344).await;
+
+        assert!(caches.runtime_identity.read().await.is_some());
+        assert!(caches.runtime_code.read().await.is_some());
+        assert!(caches.block_time_secs.read().await.is_some());
+    }
+
+    /// Spec mismatch (the actual `set_code` case) clears all three head
+    /// caches so the next `/runtime` read fetches post-upgrade values. This
+    /// is the regression the surrounding watcher logic guards against —
+    /// without it, the page kept rendering spec 201 after the chain
+    /// upgraded to 202.
+    #[tokio::test]
+    async fn watcher_caches_clear_on_spec_change() {
+        let caches = empty_caches();
+        *caches.runtime_identity.write().await = Some(sample_identity(201));
+        *caches.runtime_code.write().await = Some(sample_code());
+        *caches.block_time_secs.write().await = Some(6);
+
+        caches.invalidate_if_spec_changed(202, 1_441_344).await;
+
+        assert!(caches.runtime_identity.read().await.is_none());
+        assert!(caches.runtime_code.read().await.is_none());
+        assert!(caches.block_time_secs.read().await.is_none());
+    }
+
+    /// Empty cache → no-op. Lets the watcher cheaply skip the pin call
+    /// when nothing has populated the head caches yet.
+    #[tokio::test]
+    async fn watcher_caches_noop_when_identity_empty() {
+        let caches = empty_caches();
+        caches.invalidate_if_spec_changed(202, 1_441_344).await;
+        assert!(caches.runtime_identity.read().await.is_none());
+        assert!(caches.runtime_code.read().await.is_none());
+        assert!(caches.block_time_secs.read().await.is_none());
     }
 }
