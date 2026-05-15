@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.6](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.5...backend-v0.3.6) (2026-05-15)
+
+
+### Bug Fixes
+
+* **api:** clamp allocation start_block to envelope cliff ([1060784](https://github.com/Allfeat/allfeat-explorer/commit/106078484ebe9bd9cb4406b0f3d00fc894f29ef5))
+
 ## [0.3.5](https://github.com/Allfeat/allfeat-explorer/compare/backend-v0.3.4...backend-v0.3.5) (2026-05-14)
 
 
