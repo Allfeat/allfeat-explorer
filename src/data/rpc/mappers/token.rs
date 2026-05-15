@@ -294,16 +294,25 @@ async fn iter_allocations(
 }
 
 /// Turn an on-chain allocation + its envelope config into the domain shape.
-/// `vesting_duration` is looked up from the config so the explorer can
-/// recompute `claimable_now` without a second round-trip.
+/// `cliff` / `vesting_duration` are looked up from the config so the explorer
+/// can recompute `claimable_now` without a second round-trip.
+///
+/// `start_block` mirrors `pallet-token-allocation::claimable_amount`'s
+/// `effective_start = max(alloc.start, cfg.cliff)` (lib.rs:450). The on-chain
+/// `Allocation.start` defaults to `cfg.cliff` only when unset, so an explicit
+/// early start — or a later cliff-raising migration that leaves existing
+/// allocations on their original smaller `start` — sits *before* the envelope
+/// cliff. The clamp must happen here or the explorer reports vesting as live
+/// throughout a cliff the chain is still enforcing.
 fn build_allocation(
     alloc_id: u32,
     alloc: &OnChainAllocation,
+    cliff: u32,
     vesting_duration: u32,
     head_block: u64,
     ss58_prefix: u16,
 ) -> Allocation {
-    let start_block = alloc.start as u64;
+    let start_block = (alloc.start as u64).max(cliff as u64);
     let vesting_duration = vesting_duration as u64;
     let claimable_now = claimable_amount(
         head_block,
@@ -496,6 +505,7 @@ pub async fn build_envelope_detail(
             build_allocation(
                 aid,
                 &alloc,
+                config.cliff,
                 config.vesting_duration,
                 head_block,
                 ss58_prefix,
@@ -541,9 +551,10 @@ pub async fn build_account_allocations(
     let all = iter_allocations(at).await?;
     let target_bytes: &[u8; 32] = target.as_ref();
 
-    // Cache per-envelope configs for vesting_duration lookup. A given account
-    // rarely spans every envelope, so populate on demand rather than upfront.
-    let mut config_cache: std::collections::HashMap<EnvelopeId, u32> =
+    // Cache per-envelope `(cliff, vesting_duration)` for the vesting math. A
+    // given account rarely spans every envelope, so populate on demand rather
+    // than upfront.
+    let mut config_cache: std::collections::HashMap<EnvelopeId, (u32, u32)> =
         std::collections::HashMap::new();
 
     let mut out = Vec::new();
@@ -553,19 +564,20 @@ pub async fn build_account_allocations(
             continue;
         }
         let envelope = to_domain_envelope_id(&alloc.envelope);
-        let vesting_duration = if let Some(v) = config_cache.get(&envelope) {
+        let (cliff, vesting_duration) = if let Some(v) = config_cache.get(&envelope) {
             *v
         } else {
             let v = fetch_envelope_config(at, envelope)
                 .await?
-                .map(|cfg| cfg.vesting_duration)
-                .unwrap_or(0);
+                .map(|cfg| (cfg.cliff, cfg.vesting_duration))
+                .unwrap_or((0, 0));
             config_cache.insert(envelope, v);
             v
         };
         out.push(build_allocation(
             aid,
             &alloc,
+            cliff,
             vesting_duration,
             head_block,
             ss58_prefix,
@@ -665,7 +677,8 @@ mod tests {
     #[test]
     fn build_allocation_computes_percent_vested_and_claimable() {
         let alloc = fixture_alloc(1_000, 800, 200, 100);
-        let domain = build_allocation(42, &alloc, 1_000, 600, 42);
+        // cliff=0 (< start) so the clamp is a no-op and start_block stays 100.
+        let domain = build_allocation(42, &alloc, 0, 1_000, 600, 42);
         assert_eq!(domain.id, 42);
         assert_eq!(domain.envelope, EnvelopeId::Teams);
         assert_eq!(domain.total, 1_000);
@@ -682,8 +695,28 @@ mod tests {
     #[test]
     fn build_allocation_with_zero_vested_total_reports_full_vested() {
         let alloc = fixture_alloc(500, 0, 0, 0);
-        let domain = build_allocation(7, &alloc, 0, 0, 42);
+        let domain = build_allocation(7, &alloc, 0, 0, 0, 42);
         assert_eq!(domain.percent_vested, 100);
         assert_eq!(domain.claimable_now, 0);
+    }
+
+    #[test]
+    fn build_allocation_clamps_start_to_envelope_cliff() {
+        // Regression for the Public2 cliff-fix report: a cliff-raising
+        // migration leaves the allocation's `start` (100) below the new
+        // envelope cliff (1_000_000). The chain's `claimable_amount` uses
+        // `max(alloc.start, cfg.cliff)` (pallet lib.rs:450), so the explorer
+        // must too — `start_block` clamps up to the cliff and `claimable_now`
+        // stays zero. Without the clamp, head=5_000 vs start=100 would read as
+        // fully past a 500-block vest and wrongly report the whole 1_000 as
+        // claimable ("released in a day").
+        let alloc = fixture_alloc(1_000, 1_000, 0, 100);
+        let domain = build_allocation(1, &alloc, 1_000_000, 500, 5_000, 42);
+        assert_eq!(domain.start_block, 1_000_000, "start clamps up to cliff");
+        assert_eq!(
+            domain.claimable_now, 0,
+            "still in cliff at head < cliff → nothing claimable"
+        );
+        assert_eq!(domain.percent_vested, 0);
     }
 }
